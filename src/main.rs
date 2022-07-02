@@ -379,10 +379,14 @@ fn start_work(input: PathBuf, output: PathBuf) {
     }
   }
 
+  // Wait for all the threads to finish
   input_handle.join().unwrap();
   for handle in threads {
     handle.join().unwrap();
   }
+
+  // We're done with the hash_to_offset hashmap, so we'll remove it from memory.
+  drop(hash_to_offset);
 
   println!("Completed write of {} tiles.", current_count);
 
