@@ -6,7 +6,9 @@ use std::time;
 use std::io::prelude::*;
 use std::collections::HashMap;
 
-// use crossbeam_channel::bounded;
+use std::thread;
+use crossbeam_channel::bounded;
+
 use md5::{Md5, Digest};
 use flate2::read::GzDecoder;
 
@@ -225,10 +227,23 @@ fn maybe_decompress(data: Vec<u8>) -> Vec<u8> {
   return data;
 }
 
-fn start_work(input: PathBuf, output: PathBuf) {
-  let connection = sqlite::open(input).unwrap();
-  connection.execute("PRAGMA query_only = true;").unwrap();
+struct WorkJob {
+  zoom_level: i64,
+  tile_column: i64,
+  tile_row: i64,
+  tile_data: Vec<u8>,
+}
 
+struct WorkResults {
+  zoom_level: i64,
+  tile_column: i64,
+  tile_row: i64,
+  tile_digest: Vec<u8>,
+  // uncompressed
+  tile_data: Vec<u8>,
+}
+
+fn start_work(input: PathBuf, output: PathBuf) {
   // open output file
   let mut output_f = std::fs::OpenOptions::new()
     .read(true)
@@ -238,6 +253,86 @@ fn start_work(input: PathBuf, output: PathBuf) {
     .unwrap();
   let mut out = std::io::BufWriter::with_capacity(128 * 1024, &mut output_f);
 
+  // Work queue (input)
+  let (queue_tx, queue_rx) = bounded::<WorkJob>(10_000_000);
+
+  // Result queue (output)
+  let (results_tx, results_rx) = bounded::<WorkResults>(10_000_000);
+
+  // Keep track of the threads we spawn so we can join them later
+  let mut threads = Vec::new();
+
+  let max_workers = std::cmp::max(num_cpus::get() - 2, 2);
+  println!("Spawning {} workers.", max_workers);
+
+  for thread_num in 0..max_workers {
+    let thread_queue_rx = queue_rx.clone();
+    let thread_results_tx = results_tx.clone();
+    let handle = thread::spawn(move || {
+      let mut work_done = 0;
+
+      while let Ok(work) = thread_queue_rx.recv_timeout(std::time::Duration::new(0, 300_000_000)) {
+        let tile_data_uncompressed = maybe_decompress(work.tile_data);
+        let mut hasher = Md5::new();
+        hasher.update(&tile_data_uncompressed);
+        let hash_result = hasher.finalize();
+        let tile_digest = hash_result.to_vec();
+
+        work_done += 1;
+
+        thread_results_tx.send(WorkResults {
+          zoom_level: work.zoom_level,
+          tile_column: work.tile_column,
+          tile_row: work.tile_row,
+          tile_digest: tile_digest,
+          tile_data: tile_data_uncompressed,
+        }).unwrap();
+      }
+
+      println!("Thread {} did {} jobs.", thread_num, work_done);
+    });
+    threads.push(handle);
+  }
+
+  let mut current_count = 0;
+  let mut last_ts = time::Instant::now();
+
+  let input_thread_queue_tx = queue_tx.clone();
+  let input_thread_input = input.clone();
+  let input_handle = thread::spawn(move || {
+    let connection = sqlite::open(input_thread_input).unwrap();
+    connection.execute("PRAGMA query_only = true;").unwrap();
+
+    let mut statement = connection.prepare("
+      SELECT
+        zoom_level,
+        tile_column,
+        tile_row,
+        tile_data
+      FROM
+        tiles
+      ORDER BY zoom_level, tile_column, tile_row ASC
+    ").unwrap();
+    while let sqlite::State::Row = statement.next().unwrap() {
+      let zoom_level = statement.read::<i64>(0).unwrap();
+      let tile_column = statement.read::<i64>(1).unwrap();
+      let tile_row = statement.read::<i64>(2).unwrap();
+      let tile_data = statement.read::<Vec<u8>>(3).unwrap();
+
+      // flipped = (1 << row[0]) - 1 - row[2]
+      let flipped_row = (1 << zoom_level) - 1 - tile_row;
+
+      let work = WorkJob {
+        zoom_level: zoom_level,
+        tile_column: tile_column,
+        tile_row: flipped_row,
+        tile_data: tile_data,
+      };
+      input_thread_queue_tx.send(work).unwrap();
+    }
+    println!("Done reading input.");
+  });
+
   let mut offset = 512000;
   // leave space for the header
   out.write_all(&[0; 512000]).unwrap();
@@ -245,52 +340,24 @@ fn start_work(input: PathBuf, output: PathBuf) {
   let mut tile_entries = Vec::<TileEntry>::new();
   let mut hash_to_offset = HashMap::<Vec<u8>, u64>::new();
 
-  let mut current_count = 0;
-  let mut last_ts = time::Instant::now();
-
-  let mut statement = connection.prepare("
-    SELECT
-      zoom_level,
-      tile_column,
-      tile_row,
-      tile_data
-    FROM
-      tiles
-    ORDER BY zoom_level, tile_column, tile_row ASC
-    LIMIT 1000000
-  ").unwrap();
-  while let sqlite::State::Row = statement.next().unwrap() {
-    let zoom_level = statement.read::<i64>(0).unwrap();
-    let tile_column = statement.read::<i64>(1).unwrap();
-    let tile_row = statement.read::<i64>(2).unwrap();
-    let tile_data = statement.read::<Vec<u8>>(3).unwrap();
-
-    // flipped = (1 << row[0]) - 1 - row[2]
-    let flipped_row = (1 << zoom_level) - 1 - tile_row;
-
-    let tile_data_uncompressed = maybe_decompress(tile_data);
-    let mut hasher = Md5::new();
-    hasher.update(&tile_data_uncompressed);
-    let hash_result = hasher.finalize();
-    let tile_digest = hash_result.to_vec();
-
-    if let Some(tile_offset) = hash_to_offset.get(&tile_digest) {
+  while let Ok(result) = results_rx.recv_timeout(std::time::Duration::new(0, 300_000_000)) {
+    if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
       tile_entries.push(TileEntry {
-        z: zoom_level as u64,
-        x: tile_column as u64,
-        y: flipped_row as u64,
+        z: result.zoom_level as u64,
+        x: result.tile_column as u64,
+        y: result.tile_row as u64,
         offset: *tile_offset,
-        length: tile_data_uncompressed.len() as u64,
+        length: result.tile_data.len() as u64,
         is_dir: false,
       });
     } else {
-      let tile_data_len = tile_data_uncompressed.len() as u64;
-      out.write_all(&tile_data_uncompressed).unwrap();
-      hash_to_offset.insert(tile_digest, offset);
+      let tile_data_len = result.tile_data.len() as u64;
+      out.write_all(&result.tile_data).unwrap();
+      hash_to_offset.insert(result.tile_digest, offset);
       tile_entries.push(TileEntry {
-        z: zoom_level as u64,
-        x: tile_column as u64,
-        y: flipped_row as u64,
+        z: result.zoom_level as u64,
+        x: result.tile_column as u64,
+        y: result.tile_row as u64,
         offset,
         length: tile_data_len,
         is_dir: false,
@@ -310,6 +377,11 @@ fn start_work(input: PathBuf, output: PathBuf) {
       );
       last_ts = ts;
     }
+  }
+
+  input_handle.join().unwrap();
+  for handle in threads {
+    handle.join().unwrap();
   }
 
   println!("Completed write of {} tiles.", current_count);
@@ -339,6 +411,8 @@ fn start_work(input: PathBuf, output: PathBuf) {
 
 
   let mut metadata_raw = HashMap::<String, String>::new();
+  let connection = sqlite::open(input).unwrap();
+  connection.execute("PRAGMA query_only = true;").unwrap();
   let mut metadata_stmt = connection.prepare("
     SELECT name,value FROM metadata;
   ").unwrap();
