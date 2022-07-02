@@ -78,7 +78,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
 
   //  sorted_entries = sorted(tile_entries, key=entrysort)
   let mut sorted_entries = tile_entries.clone();
-  sorted_entries.sort();
+  sorted_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
   if sorted_entries.len() <= max_dir_size {
     return (sorted_entries, vec![]);
     // return ();
@@ -90,7 +90,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
   // root_entries = [e for e in sorted_entries if e.z < leaf_level]
   let mut root_entries = sorted_entries.iter().filter(|e| e.z < leaf_level).cloned().collect::<Vec<TileEntry>>();
   // entries_in_leaves = [e for e in sorted_entries if e.z >= leaf_level]
-  let mut entries_in_leaves = sorted_entries.iter().filter(|e| e.z >= leaf_level).cloned().collect::<Vec<TileEntry>>();
+  let mut entries_in_leaves = sorted_entries.iter().filter(|e| e.z >= leaf_level).collect::<Vec<&TileEntry>>();
 
   // # group the entries by their parent (stable)
   // entries_in_leaves.sort(key=by_parent)
@@ -100,13 +100,13 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
   let mut current_offset = start_leaf_offset;
 
   // # pack entries into groups
-  let mut packed_entries: Vec<TileEntry> = Vec::new();
+  let mut packed_entries: Vec<&TileEntry> = Vec::new();
   let mut packed_roots: Vec<(u64, u64, u64)> = Vec::new();
 
   // for group in itertools.groupby(entries_in_leaves, key=by_parent):
   for (_key, group) in &entries_in_leaves.into_iter().group_by(|e| by_parent(leaf_level, e)) {
     // subpyramid_entries = list(group[1])
-    let subpyramid_entries = group.collect::<Vec<TileEntry>>();
+    let subpyramid_entries = group.collect::<Vec<&TileEntry>>();
 
     // root = by_parent(subpyramid_entries[0])
     let root = by_parent(leaf_level, &subpyramid_entries[0]);
@@ -114,7 +114,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
     // if len(packed_entries) + len(subpyramid_entries) <= max_dir_size:
     if packed_entries.len() + subpyramid_entries.len() <= max_dir_size {
       // packed_entries.extend(subpyramid_entries)
-      packed_entries.extend(subpyramid_entries.iter().cloned().collect::<Vec<TileEntry>>());
+      packed_entries.extend(subpyramid_entries.iter().cloned().collect::<Vec<&TileEntry>>());
       // packed_roots.append(root)
       packed_roots.push(root);
     } else {
@@ -141,11 +141,11 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
       // packed_entries.sort(key=entrysort)
       packed_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
 
-      // leaf_dirs.append(packed_entries)
-      leaf_dirs.push(packed_entries.clone());
-
       // current_offset += 17 * len(packed_entries)
       current_offset += 17 * packed_entries.len() as u64;
+
+      // leaf_dirs.append(packed_entries)
+      leaf_dirs.push(packed_entries.into_iter().cloned().collect::<Vec<TileEntry>>());
 
       // packed_entries = subpyramid_entries
       packed_entries = subpyramid_entries.into_iter().collect();
@@ -181,7 +181,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
     packed_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
 
     // leaf_dirs.append(packed_entries)
-    leaf_dirs.push(packed_entries.clone());
+    leaf_dirs.push(packed_entries.into_iter().cloned().collect::<Vec<TileEntry>>());
   }
 
   // return (root_entries, leaf_dirs)
