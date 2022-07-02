@@ -8,7 +8,9 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.2.8", features = ["derive"] }
 
+md-5 = "0.10"
 sqlite = "0.26.0"
 itertools = "0.10.3"
 serde_json = "1.0.82"
-flate2 = "1.0"
+crossbeam-channel = "0.5"
+flate2 = { version = "1.0", features = ["zlib-ng"], default-features = false }

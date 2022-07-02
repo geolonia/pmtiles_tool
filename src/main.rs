@@ -2,8 +2,12 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::io;
 use std::io::Write;
+use std::time;
 use std::io::prelude::*;
 use std::collections::HashMap;
+
+// use crossbeam_channel::bounded;
+use md5::{Md5, Digest};
 use flate2::read::GzDecoder;
 
 use itertools::Itertools;
@@ -211,6 +215,16 @@ fn write_entry(out: &mut std::io::BufWriter<&mut std::fs::File>, entry: TileEntr
   out.write(&(entry.length as u32).to_le_bytes()).unwrap();
 }
 
+fn maybe_decompress(data: Vec<u8>) -> Vec<u8> {
+  if data[0] == 0x1f && data[1] == 0x8b {
+    let mut out = Vec::new();
+    let mut zlib = GzDecoder::new(std::io::Cursor::new(&data[..]));
+    zlib.read_to_end(&mut out).unwrap();
+    return out;
+  }
+  return data;
+}
+
 fn start_work(input: PathBuf, output: PathBuf) {
   let connection = sqlite::open(input).unwrap();
   connection.execute("PRAGMA query_only = true;").unwrap();
@@ -222,37 +236,43 @@ fn start_work(input: PathBuf, output: PathBuf) {
     .create_new(true)
     .open(&output)
     .unwrap();
-  let mut out = std::io::BufWriter::new(&mut output_f);
+  let mut out = std::io::BufWriter::with_capacity(128 * 1024, &mut output_f);
 
   let mut offset = 512000;
   // leave space for the header
   out.write_all(&[0; 512000]).unwrap();
 
   let mut tile_entries = Vec::<TileEntry>::new();
-  let mut hash_to_offset = HashMap::<String, u64>::new();
+  let mut hash_to_offset = HashMap::<Vec<u8>, u64>::new();
+
+  let mut current_count = 0;
+  let mut last_ts = time::Instant::now();
 
   let mut statement = connection.prepare("
     SELECT
-      tile_ref.zoom_level,
-      tile_ref.tile_column,
-      tile_ref.tile_row,
-      tile_ref.tile_digest,
-      images.tile_data
+      zoom_level,
+      tile_column,
+      tile_row,
+      tile_data
     FROM
-      tile_ref
-    JOIN images ON images.tile_digest = tile_ref.tile_digest
+      tiles
     ORDER BY zoom_level, tile_column, tile_row ASC
-    LIMIT 100000
+    LIMIT 1000000
   ").unwrap();
   while let sqlite::State::Row = statement.next().unwrap() {
     let zoom_level = statement.read::<i64>(0).unwrap();
     let tile_column = statement.read::<i64>(1).unwrap();
     let tile_row = statement.read::<i64>(2).unwrap();
-    let tile_digest = statement.read::<String>(3).unwrap();
-    let tile_data = statement.read::<Vec<u8>>(4).unwrap();
+    let tile_data = statement.read::<Vec<u8>>(3).unwrap();
 
     // flipped = (1 << row[0]) - 1 - row[2]
     let flipped_row = (1 << zoom_level) - 1 - tile_row;
+
+    let tile_data_uncompressed = maybe_decompress(tile_data);
+    let mut hasher = Md5::new();
+    hasher.update(&tile_data_uncompressed);
+    let hash_result = hasher.finalize();
+    let tile_digest = hash_result.to_vec();
 
     if let Some(tile_offset) = hash_to_offset.get(&tile_digest) {
       tile_entries.push(TileEntry {
@@ -260,15 +280,10 @@ fn start_work(input: PathBuf, output: PathBuf) {
         x: tile_column as u64,
         y: flipped_row as u64,
         offset: *tile_offset,
-        length: tile_data.len() as u64,
+        length: tile_data_uncompressed.len() as u64,
         is_dir: false,
       });
     } else {
-      // uncompress tile_data
-      let mut decompressor = GzDecoder::new(tile_data.as_slice());
-      let mut tile_data_uncompressed = Vec::<u8>::new();
-      decompressor.read_to_end(&mut tile_data_uncompressed).unwrap();
-
       let tile_data_len = tile_data_uncompressed.len() as u64;
       out.write_all(&tile_data_uncompressed).unwrap();
       hash_to_offset.insert(tile_digest, offset);
@@ -282,9 +297,25 @@ fn start_work(input: PathBuf, output: PathBuf) {
       });
       offset += tile_data_len;
     }
+
+    current_count += 1;
+    if current_count % 100_000 == 0 {
+      let ts = time::Instant::now();
+      let elapsed = ts.duration_since(last_ts);
+      println!(
+        "{} tiles added to archive in {}ms ({:.4}ms/tile).",
+        current_count,
+        elapsed.as_millis(),
+        elapsed.as_millis() as f64 / 100_000 as f64,
+      );
+      last_ts = ts;
+    }
   }
 
+  println!("Completed write of {} tiles.", current_count);
+
   let (root_dir, leaf_dirs) = make_pyramid(&tile_entries, offset, None);
+  println!("Calculated {} root entries, {} leaf dirs.", root_dir.len(), leaf_dirs.len());
   if leaf_dirs.len() > 0 {
     for leaf_dir in leaf_dirs {
       for entry in leaf_dir {
@@ -293,6 +324,8 @@ fn start_work(input: PathBuf, output: PathBuf) {
       }
     }
   }
+
+  println!("Writing header and root dir...");
 
   // Seek to the beginning of the file so we can write the header
   out.seek(std::io::SeekFrom::Start(0)).unwrap();
