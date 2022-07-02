@@ -2,6 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::io::prelude::*;
 use std::collections::HashMap;
+use flate2::read::GzDecoder;
 
 use itertools::Itertools;
 
@@ -260,8 +261,13 @@ fn start_work(input: PathBuf, output: PathBuf) {
         is_dir: false,
       });
     } else {
-      let tile_data_len = tile_data.len() as u64;
-      out.write_all(&tile_data).unwrap();
+      // uncompress tile_data
+      let mut decompressor = GzDecoder::new(tile_data.as_slice());
+      let mut tile_data_uncompressed = Vec::<u8>::new();
+      decompressor.read_to_end(&mut tile_data_uncompressed).unwrap();
+
+      let tile_data_len = tile_data_uncompressed.len() as u64;
+      out.write_all(&tile_data_uncompressed).unwrap();
       hash_to_offset.insert(tile_digest, offset);
       tile_entries.push(TileEntry {
         z: zoom_level as u64,
