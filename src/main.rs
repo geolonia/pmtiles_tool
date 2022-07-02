@@ -56,10 +56,12 @@ struct TileEntry {
   x: u64,
   y: u64,
   offset: u64,
-  length: u64,
+  length: u32,
   is_dir: bool,
 }
 
+// Find best base zoom to avoid extra indirection for as many tiles as we can
+// precondition: entries is sorted, only tile entries, len(entries) > max_dir_size
 fn find_leaf_level(entries: &Vec<TileEntry>, max_dir_size: usize) -> u64 {
   entries.get(max_dir_size).unwrap().z - 1
 }
@@ -70,7 +72,11 @@ fn entrysort(e: &TileEntry) ->  (u64, u64, u64) {
 
 fn by_parent(leaf_level: u64, e: &TileEntry) -> (u64, u64, u64) {
   let level_diff = e.z - leaf_level;
-  return (leaf_level, e.x / (1 << level_diff), e.y / (1 << level_diff));
+  return (
+    leaf_level,
+    e.x / (1 << level_diff),
+    e.y / (1 << level_diff),
+  );
 }
 
 fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max_dir_size: Option<usize>) -> (Vec<TileEntry>, Vec<Vec<TileEntry>>) {
@@ -79,6 +85,8 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
   //  sorted_entries = sorted(tile_entries, key=entrysort)
   let mut sorted_entries = tile_entries.clone();
   sorted_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
+
+  // If the number of entries is less than max_dir_size, we don't need to do anything
   if sorted_entries.len() <= max_dir_size {
     return (sorted_entries, vec![]);
     // return ();
@@ -86,6 +94,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
 
   let mut leaf_dirs: Vec<Vec<TileEntry>> = Vec::new();
   let leaf_level = find_leaf_level(&sorted_entries, max_dir_size);
+  println!("Tiles above z{} will be stored in leaves", leaf_level);
 
   // root_entries = [e for e in sorted_entries if e.z < leaf_level]
   let mut root_entries = sorted_entries.iter().filter(|e| e.z < leaf_level).cloned().collect::<Vec<TileEntry>>();
@@ -131,7 +140,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
           x: *root_1,
           y: *root_2,
           offset: current_offset,
-          length: 17 * packed_entries.len() as u64,
+          length: 17 * packed_entries.len() as u32,
           is_dir: true,
         };
         root_entries.push(entry);
@@ -170,7 +179,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
         x: *root_1,
         y: *root_2,
         offset: current_offset,
-        length: 17 * packed_entries.len() as u64,
+        length: 17 * packed_entries.len() as u32,
         is_dir: true,
       };
       root_entries.push(entry);
@@ -188,6 +197,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
   return (root_entries, leaf_dirs);
 }
 
+// One entry is 17 bytes long
 fn write_entry(out: &mut std::io::BufWriter<&mut std::fs::File>, entry: TileEntry) {
   let mut z_bytes = entry.z as u8;
   if entry.is_dir {
@@ -347,11 +357,11 @@ fn start_work(input: PathBuf, output: PathBuf) {
         x: result.tile_column as u64,
         y: result.tile_row as u64,
         offset: *tile_offset,
-        length: result.tile_data.len() as u64,
+        length: result.tile_data.len() as u32,
         is_dir: false,
       });
     } else {
-      let tile_data_len = result.tile_data.len() as u64;
+      let tile_data_len = result.tile_data.len() as u32;
       out.write_all(&result.tile_data).unwrap();
       hash_to_offset.insert(result.tile_digest, offset);
       tile_entries.push(TileEntry {
@@ -362,7 +372,7 @@ fn start_work(input: PathBuf, output: PathBuf) {
         length: tile_data_len,
         is_dir: false,
       });
-      offset += tile_data_len;
+      offset += tile_data_len as u64;
     }
 
     current_count += 1;
