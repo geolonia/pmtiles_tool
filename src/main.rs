@@ -1,5 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
+use std::io;
+use std::io::Write;
 use std::io::prelude::*;
 use std::collections::HashMap;
 use flate2::read::GzDecoder;
@@ -28,9 +30,10 @@ fn main() {
 
   // ask if we should overwrite the output file
   if args.output.exists() {
-    println!("Output file already exists. Overwrite? (y/n)");
+    print!("Output file already exists. Overwrite? (y/n) ");
+    io::stdout().flush().unwrap();
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
+    io::stdin().read_line(&mut input).unwrap();
     if input.trim() != "y" {
       panic!("Aborted");
     }
@@ -239,7 +242,7 @@ fn start_work(input: PathBuf, output: PathBuf) {
       tile_ref
     JOIN images ON images.tile_digest = tile_ref.tile_digest
     ORDER BY zoom_level, tile_column, tile_row ASC
-    LIMIT 10000
+    LIMIT 100000
   ").unwrap();
   while let sqlite::State::Row = statement.next().unwrap() {
     let zoom_level = statement.read::<i64>(0).unwrap();
@@ -291,6 +294,7 @@ fn start_work(input: PathBuf, output: PathBuf) {
     }
   }
 
+  // Seek to the beginning of the file so we can write the header
   out.seek(std::io::SeekFrom::Start(0)).unwrap();
 
   // write header
@@ -310,6 +314,8 @@ fn start_work(input: PathBuf, output: PathBuf) {
     let value = metadata_stmt.read::<String>(1).unwrap();
     metadata_raw.insert(name, value);
   }
+  // We are removing compression from the tile, so we need to remove the compression flag.
+  metadata_raw.remove("compression");
 
   // metadata_serialized = json.dumps(metadata)
   let metadata_serialized = serde_json::to_string(&metadata_raw).unwrap();
