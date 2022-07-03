@@ -92,7 +92,6 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
     // return ();
   }
 
-  let mut leaf_dirs: Vec<Vec<TileEntry>> = Vec::new();
   let leaf_level = find_leaf_level(&sorted_entries, max_dir_size);
   println!("Tiles above z{} will be stored in leaves", leaf_level);
 
@@ -100,6 +99,8 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
   let mut root_entries = sorted_entries.iter().filter(|e| e.z < leaf_level).cloned().collect::<Vec<TileEntry>>();
   // entries_in_leaves = [e for e in sorted_entries if e.z >= leaf_level]
   let mut entries_in_leaves = sorted_entries.iter().filter(|e| e.z >= leaf_level).collect::<Vec<&TileEntry>>();
+
+  let mut leaf_dirs: Vec<Vec<TileEntry>> = Vec::with_capacity(entries_in_leaves.len() / max_dir_size);
 
   // # group the entries by their parent (stable)
   // entries_in_leaves.sort(key=by_parent)
@@ -109,7 +110,7 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
   let mut current_offset = start_leaf_offset;
 
   // # pack entries into groups
-  let mut packed_entries: Vec<&TileEntry> = Vec::new();
+  let mut packed_entries: Vec<&TileEntry> = Vec::with_capacity(max_dir_size);
   let mut packed_roots: Vec<(u64, u64, u64)> = Vec::new();
 
   // for group in itertools.groupby(entries_in_leaves, key=by_parent):
@@ -193,6 +194,8 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, maybe_max
     leaf_dirs.push(packed_entries.into_iter().cloned().collect::<Vec<TileEntry>>());
   }
 
+  println!("root_entries is {} bytes", root_entries.len() * std::mem::size_of::<TileEntry>());
+
   // return (root_entries, leaf_dirs)
   return (root_entries, leaf_dirs);
 }
@@ -270,10 +273,9 @@ fn start_work(input: PathBuf, output: PathBuf) {
   let (results_tx, results_rx) = bounded::<WorkResults>(10_000_000);
 
   // Keep track of the threads we spawn so we can join them later
-  let mut threads = Vec::new();
-
   let max_workers = std::cmp::max(num_cpus::get() - 2, 2);
   println!("Spawning {} workers.", max_workers);
+  let mut threads = Vec::with_capacity(max_workers);
 
   for thread_num in 0..max_workers {
     let thread_queue_rx = queue_rx.clone();
