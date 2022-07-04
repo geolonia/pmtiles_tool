@@ -234,8 +234,8 @@ fn write_entry(out: &mut std::io::BufWriter<&mut std::fs::File>, entry: TileEntr
 
 fn maybe_decompress(data: Vec<u8>) -> Vec<u8> {
   if data[0] == 0x1f && data[1] == 0x8b {
-    let mut out = Vec::new();
-    let mut zlib = GzDecoder::new(std::io::Cursor::new(&data[..]));
+    let mut out = Vec::with_capacity(data.len() * 2);
+    let mut zlib = GzDecoder::new(data.as_slice());
     zlib.read_to_end(&mut out).unwrap();
     return out;
   }
@@ -275,7 +275,7 @@ fn start_work(input: PathBuf, output: PathBuf) {
   let (results_tx, results_rx) = bounded::<WorkResults>(10_000_000);
 
   // Keep track of the threads we spawn so we can join them later
-  let max_workers = std::cmp::max(num_cpus::get() - 2, 2);
+  let max_workers = std::cmp::max(num_cpus::get() - 1, 2);
   println!("Spawning {} workers.", max_workers);
   let mut threads = Vec::with_capacity(max_workers);
 
@@ -355,29 +355,25 @@ fn start_work(input: PathBuf, output: PathBuf) {
   let mut last_ts = time::Instant::now();
 
   while let Ok(result) = results_rx.recv_timeout(std::time::Duration::new(0, 300_000_000)) {
+    let mut tile_entry = TileEntry {
+      z: result.zoom_level as u64,
+      x: result.tile_column as u64,
+      y: result.tile_row as u64,
+      offset: 0,
+      length: result.tile_data.len() as u32,
+      is_dir: false,
+    };
     if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
-      tile_entries.push(TileEntry {
-        z: result.zoom_level as u64,
-        x: result.tile_column as u64,
-        y: result.tile_row as u64,
-        offset: *tile_offset,
-        length: result.tile_data.len() as u32,
-        is_dir: false,
-      });
+      tile_entry.offset = *tile_offset;
     } else {
       let tile_data_len = result.tile_data.len() as u32;
       out.write_all(&result.tile_data).unwrap();
       hash_to_offset.insert(result.tile_digest, offset);
-      tile_entries.push(TileEntry {
-        z: result.zoom_level as u64,
-        x: result.tile_column as u64,
-        y: result.tile_row as u64,
-        offset,
-        length: tile_data_len,
-        is_dir: false,
-      });
+      tile_entry.offset = offset;
       offset += tile_data_len as u64;
     }
+
+    tile_entries.push(tile_entry);
 
     current_count += 1;
     if current_count % 100_000 == 0 {
