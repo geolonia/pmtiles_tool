@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::thread;
 use crossbeam_channel::bounded;
 
-use md5::{Md5, Digest};
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
+
 use flate2::read::GzDecoder;
 
 use itertools::Itertools;
@@ -251,7 +253,7 @@ struct WorkResults {
   zoom_level: i64,
   tile_column: i64,
   tile_row: i64,
-  tile_digest: Vec<u8>,
+  tile_digest: u64,
   // uncompressed
   tile_data: Vec<u8>,
 }
@@ -285,10 +287,10 @@ fn start_work(input: PathBuf, output: PathBuf) {
 
       while let Ok(work) = thread_queue_rx.recv_timeout(std::time::Duration::new(0, 300_000_000)) {
         let tile_data_uncompressed = maybe_decompress(work.tile_data);
-        let mut hasher = Md5::new();
-        hasher.update(&tile_data_uncompressed);
-        let hash_result = hasher.finalize();
-        let tile_digest = hash_result.to_vec();
+
+        let mut hasher = DefaultHasher::new();
+        tile_data_uncompressed.hash(&mut hasher);
+        let tile_digest = hasher.finish();
 
         work_done += 1;
 
@@ -305,9 +307,6 @@ fn start_work(input: PathBuf, output: PathBuf) {
     });
     threads.push(handle);
   }
-
-  let mut current_count = 0;
-  let mut last_ts = time::Instant::now();
 
   let input_thread_queue_tx = queue_tx.clone();
   let input_thread_input = input.clone();
@@ -350,7 +349,10 @@ fn start_work(input: PathBuf, output: PathBuf) {
   out.write_all(&[0; 512000]).unwrap();
 
   let mut tile_entries = Vec::<TileEntry>::new();
-  let mut hash_to_offset = HashMap::<Vec<u8>, u64>::new();
+  let mut hash_to_offset = HashMap::<u64, u64>::with_capacity(1_000_000);
+
+  let mut current_count = 0;
+  let mut last_ts = time::Instant::now();
 
   while let Ok(result) = results_rx.recv_timeout(std::time::Duration::new(0, 300_000_000)) {
     if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
