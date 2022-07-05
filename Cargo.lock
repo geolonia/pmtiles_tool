@@ -242,6 +242,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "crossbeam-channel",
+ "crossbeam-utils",
  "flate2",
  "itertools",
  "num_cpus",
