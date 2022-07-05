@@ -1,44 +1,94 @@
 mod convert;
 mod writer;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use std::path::PathBuf;
 use std::io;
 use std::io::Write;
 
-#[derive(Parser, Debug)]
-#[clap(version = "0.1.0")]
-struct Args {
-  /// Input
-  #[clap(value_parser)]
-  input: PathBuf,
+#[derive(Debug, Parser)]
+#[clap(name="pmtiles_tool", about="A tool for working with pmtiles archives")]
+struct Cli {
+  #[clap(subcommand)]
+  command: Commands,
+}
 
-  /// Output
-  #[clap(value_parser)]
-  output: PathBuf,
+#[derive(Debug, Subcommand)]
+enum Commands {
+  #[clap(name="convert", about="Convert a mbtiles archive to a pmtiles archive")]
+  Convert {
+    /// Input
+    #[clap(value_parser)]
+    input: PathBuf,
+
+    /// Output
+    #[clap(value_parser)]
+    output: PathBuf,
+  },
+  #[clap(name="info", about="Get information about a pmtiles archive")]
+  Info {
+    /// Input
+    #[clap(value_parser)]
+    input: PathBuf,
+  },
+  #[clap(name="serve", about="Serve XYZ tiles from a pmtiles archive")]
+  Serve {
+    /// Input
+    #[clap(value_parser)]
+    input: PathBuf,
+
+    /// Port
+    #[clap(short, long, default_value="8080")]
+    port: u16,
+  },
 }
 
 fn main() {
-  let args = Args::parse();
+  let args = Cli::parse();
 
-  // fail if input file does not exist
-  if !args.input.exists() {
-    panic!("Input file does not exist");
-  }
+  match args.command {
+    Commands::Convert { input, output } => {
+      // fail if input file does not exist
+      if !input.exists() {
+        panic!("Input file does not exist");
+      }
 
-  // ask if we should overwrite the output file
-  if args.output.exists() {
-    print!("Output file already exists. Overwrite? (y/n) ");
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    if input.trim() != "y" {
-      panic!("Aborted");
+      // ask if we should overwrite the output file
+      if output.exists() {
+        print!("Output file already exists. Overwrite? (y/n) ");
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        if input.trim() != "y" {
+          panic!("Aborted");
+        }
+        // remove the output file
+        std::fs::remove_file(&output).unwrap();
+      }
+
+      convert::mbtiles_to_pmtiles(input, output);
     }
-    // remove the output file
-    std::fs::remove_file(&args.output).unwrap();
-  }
 
-  convert::mbtiles_to_pmtiles(args.input, args.output);
+    Commands::Info { input } => {
+      // fail if input file does not exist
+      if !input.exists() {
+        panic!("Input file does not exist");
+      }
+
+      // get the info
+      println!("Not implemented yet!");
+    }
+
+    Commands::Serve { input, port } => {
+      // fail if input file does not exist
+      if !input.exists() {
+        panic!("Input file does not exist");
+      }
+
+      // serve the tiles
+      println!("Starting server on port {}", port);
+      println!("Not implemented yet!");
+    }
+  }
 }
