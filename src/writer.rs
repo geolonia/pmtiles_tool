@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time;
 
 use std::sync::Arc;
 
-use crossbeam_channel;
 use crossbeam_utils::thread;
 
 use std::collections::hash_map::DefaultHasher;
@@ -50,27 +50,27 @@ struct TileEntry {
 
 // Find best base zoom to avoid extra indirection for as many tiles as we can
 // precondition: entries is sorted, only tile entries, len(entries) > max_dir_size
-fn find_leaf_level(entries: &Vec<TileEntry>, max_dir_size: usize) -> u64 {
+fn find_leaf_level(entries: &[TileEntry], max_dir_size: usize) -> u64 {
   entries.get(max_dir_size).unwrap().z - 1
 }
 
 fn entrysort(e: &TileEntry) -> (u64, u64, u64) {
-  return (e.z, e.x, e.y);
+  (e.z, e.x, e.y)
 }
 
 fn by_parent(leaf_level: u64, e: &TileEntry) -> (u64, u64, u64) {
   let level_diff = e.z - leaf_level;
-  return (leaf_level, e.x / (1 << level_diff), e.y / (1 << level_diff));
+  (leaf_level, e.x / (1 << level_diff), e.y / (1 << level_diff))
 }
 
 fn make_pyramid(
-  tile_entries: &Vec<TileEntry>,
+  tile_entries: &[TileEntry],
   start_leaf_offset: u64,
   max_dir_size: usize,
 ) -> (Vec<TileEntry>, Vec<Vec<TileEntry>>) {
   //  sorted_entries = sorted(tile_entries, key=entrysort)
-  let mut sorted_entries = tile_entries.clone();
-  sorted_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
+  let mut sorted_entries = tile_entries.to_vec();
+  sorted_entries.sort_by_key(entrysort);
 
   // If the number of entries is less than max_dir_size, we don't need to do anything
   if sorted_entries.len() <= max_dir_size {
@@ -98,7 +98,7 @@ fn make_pyramid(
 
   // # group the entries by their parent (stable)
   // entries_in_leaves.sort(key=by_parent)
-  entries_in_leaves.sort_by(|a, b| by_parent(leaf_level, a).cmp(&by_parent(leaf_level, b)));
+  entries_in_leaves.sort_by_key(|a| by_parent(leaf_level, a));
 
   // current_offset = start_leaf_offset
   let mut current_offset = start_leaf_offset;
@@ -116,17 +116,12 @@ fn make_pyramid(
     let subpyramid_entries = group.collect::<Vec<&TileEntry>>();
 
     // root = by_parent(subpyramid_entries[0])
-    let root = by_parent(leaf_level, &subpyramid_entries[0]);
+    let root = by_parent(leaf_level, subpyramid_entries[0]);
 
     // if len(packed_entries) + len(subpyramid_entries) <= max_dir_size:
     if packed_entries.len() + subpyramid_entries.len() <= max_dir_size {
       // packed_entries.extend(subpyramid_entries)
-      packed_entries.extend(
-        subpyramid_entries
-          .iter()
-          .cloned()
-          .collect::<Vec<&TileEntry>>(),
-      );
+      packed_entries.extend(subpyramid_entries.to_vec());
       // packed_roots.append(root)
       packed_roots.push(root);
     } else {
@@ -151,7 +146,7 @@ fn make_pyramid(
 
       // # re-sort the packed_entries by ZXY order
       // packed_entries.sort(key=entrysort)
-      packed_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
+      packed_entries.sort_by_key(|a| entrysort(a));
 
       // current_offset += 17 * len(packed_entries)
       current_offset += 17 * packed_entries.len() as u64;
@@ -174,7 +169,7 @@ fn make_pyramid(
 
   // # finalize the last set
   // if len(packed_entries):
-  if packed_entries.len() > 0 {
+  if !packed_entries.is_empty() {
     // for p in packed_roots:
     for (root_0, root_1, root_2) in &packed_roots {
       // root_entries.append(
@@ -195,7 +190,7 @@ fn make_pyramid(
 
     // # re-sort the packed_entries by ZXY order
     // packed_entries.sort(key=entrysort)
-    packed_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
+    packed_entries.sort_by_key(|a| entrysort(a));
 
     // leaf_dirs.append(packed_entries)
     leaf_dirs.push(
@@ -212,7 +207,7 @@ fn make_pyramid(
   );
 
   // return (root_entries, leaf_dirs)
-  return (root_entries, leaf_dirs);
+  (root_entries, leaf_dirs)
 }
 
 fn maybe_decompress(data: Vec<u8>) -> Vec<u8> {
@@ -222,7 +217,7 @@ fn maybe_decompress(data: Vec<u8>) -> Vec<u8> {
     zlib.read_to_end(&mut out).unwrap();
     return out;
   }
-  return data;
+  data
 }
 
 pub struct Writer {
@@ -233,7 +228,7 @@ pub struct Writer {
 }
 
 impl Writer {
-  pub fn new(out_path: &PathBuf) -> Writer {
+  pub fn new(out_path: &Path) -> Writer {
     // Work queue (input)
     let (input_queue_tx, input_queue_rx) = crossbeam_channel::bounded::<WorkJob>(10_000_000);
 
@@ -301,7 +296,7 @@ impl Writer {
               "{} tiles added to archive in {}ms ({:.4}ms/tile).",
               current_count,
               elapsed.as_millis(),
-              elapsed.as_millis() as f64 / 100_000 as f64,
+              elapsed.as_millis() as f64 / 100_000_f64,
             );
             last_ts = ts;
           }
@@ -314,7 +309,7 @@ impl Writer {
           root_dir.len(),
           leaf_dirs.len()
         );
-        if leaf_dirs.len() > 0 {
+        if !leaf_dirs.is_empty() {
           for leaf_dir in leaf_dirs {
             for entry in leaf_dir {
               // write entry
@@ -342,7 +337,7 @@ impl Writer {
         s.spawn(move |_| {
           let mut work_done = 0;
 
-          while thread_input_done.load() == false {
+          while !thread_input_done.load() {
             let work = thread_queue_rx.recv().unwrap();
             let tile_data_uncompressed = maybe_decompress(work.tile_data);
 
@@ -357,7 +352,7 @@ impl Writer {
                 zoom_level: work.zoom_level,
                 tile_column: work.tile_column,
                 tile_row: work.tile_row,
-                tile_digest: tile_digest,
+                tile_digest,
                 tile_data: tile_data_uncompressed,
               })
               .unwrap();
@@ -375,7 +370,7 @@ impl Writer {
   fn write_entry(&mut self, out: &mut io::BufWriter<File>, entry: TileEntry) {
     let mut z_bytes = entry.z as u8;
     if entry.is_dir {
-      z_bytes = z_bytes | 0b10000000;
+      z_bytes |= 0b10000000;
     }
 
     // if entry.is_dir:
@@ -383,25 +378,25 @@ impl Writer {
     // else:
     //     z_bytes = entry.z
     // self.f.write(z_bytes.to_bytes(1, byteorder="little"))
-    out.write(&z_bytes.to_le_bytes()).unwrap();
+    out.write_all(&z_bytes.to_le_bytes()).unwrap();
 
     // self.f.write(entry.x.to_bytes(3, byteorder="little"))
     let [x_0, x_1, x_2, _x_3] = (entry.x as u32).to_le_bytes();
-    out.write(&[x_0, x_1, x_2]).unwrap();
+    out.write_all(&[x_0, x_1, x_2]).unwrap();
 
     // self.f.write(entry.y.to_bytes(3, byteorder="little"))
     let [y_0, y_1, y_2, _y_3] = (entry.y as u32).to_le_bytes();
-    out.write(&[y_0, y_1, y_2]).unwrap();
+    out.write_all(&[y_0, y_1, y_2]).unwrap();
 
     // self.f.write(entry.offset.to_bytes(6, byteorder="little"))
     let [offset_0, offset_1, offset_2, offset_3, offset_4, offset_5, _offset_6, _offset_7] =
       (entry.offset).to_le_bytes();
     out
-      .write(&[offset_0, offset_1, offset_2, offset_3, offset_4, offset_5])
+      .write_all(&[offset_0, offset_1, offset_2, offset_3, offset_4, offset_5])
       .unwrap();
 
     // self.f.write(entry.length.to_bytes(4, byteorder="little"))
-    out.write(&(entry.length as u32).to_le_bytes()).unwrap();
+    out.write_all(&(entry.length as u32).to_le_bytes()).unwrap();
   }
 
   fn write_header(
@@ -412,29 +407,28 @@ impl Writer {
   ) {
     // write header
     // self.f.write((0x4D50).to_bytes(2, byteorder="little"))
-    out.write(&0x4D50u16.to_le_bytes()).unwrap();
+    out.write_all(&0x4D50u16.to_le_bytes()).unwrap();
 
     // self.f.write((2).to_bytes(2, byteorder="little"))
-    out.write(&2u16.to_le_bytes()).unwrap();
+    out.write_all(&2u16.to_le_bytes()).unwrap();
 
     let metadata_serialized = serde_json::to_string(metadata).unwrap();
     // # 512000 - (17 * 21845) - 2 (magic) - 2 (version) - 4 (jsonlen) - 2 (dictentries) = 140625
     // assert len(metadata_serialized) < 140625
-    assert_eq!(
+    assert!(
       metadata_serialized.len()
-        < (INITIAL_OFFSET - (17 * DEFAULT_MAX_DIR_SIZE) - 2 - 2 - 4 - 2) as usize,
-      true
+        < (INITIAL_OFFSET - (17 * DEFAULT_MAX_DIR_SIZE) - 2 - 2 - 4 - 2) as usize
     );
 
     // self.f.write(len(metadata_serialized).to_bytes(4, byteorder="little"))
     out
-      .write(&(metadata_serialized.len() as u32).to_le_bytes())
+      .write_all(&(metadata_serialized.len() as u32).to_le_bytes())
       .unwrap();
 
     // self.f.write(root_entries_len.to_bytes(2, byteorder="little"))
-    out.write(&root_dir_len.to_le_bytes()).unwrap();
+    out.write_all(&root_dir_len.to_le_bytes()).unwrap();
 
     // self.f.write(metadata_serialized.encode("utf-8"))
-    out.write(metadata_serialized.as_bytes()).unwrap();
+    out.write_all(metadata_serialized.as_bytes()).unwrap();
   }
 }

@@ -6,7 +6,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{convert::Infallible, net::SocketAddr};
 
 struct ReaderConnectionManager {
@@ -14,7 +14,7 @@ struct ReaderConnectionManager {
 }
 
 impl ReaderConnectionManager {
-  fn new(path: &PathBuf) -> ReaderConnectionManager {
+  fn new(path: &Path) -> ReaderConnectionManager {
     ReaderConnectionManager {
       path: path.to_path_buf(),
     }
@@ -46,7 +46,7 @@ async fn handle(
   lazy_static! {
     static ref RE: Regex = Regex::new(r"^/([0-9]+)/([0-9]+)/([0-9]+)\.(mvt|pbf)$").unwrap();
   }
-  if !RE.is_match(&req.uri().path()) {
+  if !RE.is_match(req.uri().path()) {
     return Ok(
       Response::builder()
         .status(404)
@@ -55,7 +55,7 @@ async fn handle(
     );
   }
 
-  for cap in RE.captures_iter(&req.uri().path()) {
+  if let Some(cap) = RE.captures_iter(req.uri().path()).next() {
     let z = cap[1].parse::<u8>().unwrap();
     let x = cap[2].parse::<u32>().unwrap();
     let y = cap[3].parse::<u32>().unwrap();
@@ -85,7 +85,7 @@ async fn handle(
 }
 
 #[tokio::main]
-pub async fn start_server(input: &PathBuf, port: u16) {
+pub async fn start_server(input: &Path, port: u16) {
   // GET /hello/warp => 200 OK with body "Hello, warp!"
   // let hello = warp::path!(u32 / u32 / u32)
   //     .map(|z, x, y| {

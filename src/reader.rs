@@ -1,5 +1,4 @@
 use memmap2::Mmap;
-use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::PathBuf;
@@ -126,8 +125,7 @@ impl Reader {
 
   pub fn get_metadata(&self) -> serde_json::Value {
     let raw_json = &self.mmap[10..(10 + self.metadata_len)];
-    let json = serde_json::from_slice(raw_json).unwrap();
-    json
+    serde_json::from_slice(raw_json).unwrap()
   }
 
   pub fn get(&self, z: u8, x: u32, y: u32) -> Option<&[u8]> {
