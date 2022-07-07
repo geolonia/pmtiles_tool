@@ -57,7 +57,7 @@ async fn handle(
     let z = cap[1].parse::<u8>().unwrap();
     let x = cap[2].parse::<u32>().unwrap();
     let y = cap[3].parse::<u32>().unwrap();
-    println!("{}/{}/{}", z, x, y);
+    println!("Serving tile: {}/{}/{}", z, x, y);
     let reader = reader_pool.get().unwrap();
     if let Some(tile_data) = reader.get(z, x, y) {
       let my_tile_data: Vec<u8> = tile_data.to_vec();

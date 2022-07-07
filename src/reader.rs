@@ -62,11 +62,12 @@ fn load_directory(mmap: &Mmap, offset: usize, num_entries: usize) -> (Directory,
     let entry = DirectoryEntry { offset: tile_off, length: tile_len };
 
     if z & 0b10000000 > 0 {
+      let unwrapped_z = z & 0b01111111;
       if leaf_level == 0 {
-        leaf_level = z;
+        leaf_level = unwrapped_z;
       }
-      println!("{:02X?} {}/{}/{} (d) : {:?}", &mmap[i_offset..i_offset+17], z & 0b01111111, x, y, entry);
-      leaves.insert(DirectoryKey { z: z & 0b01111111, x, y }, entry);
+      // println!("{:02X?} {}/{}/{} (d) : {:?}", &mmap[i_offset..i_offset+17], unwrapped_z, x, y, entry);
+      leaves.insert(DirectoryKey { z: unwrapped_z, x, y }, entry);
     } else {
       // println!("{:02X?} {}/{}/{} (t) : {:?}", &mmap[i_offset..i_offset+17], z, x, y, entry);
       directory.insert(DirectoryKey { z, x, y }, entry);
