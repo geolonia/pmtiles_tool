@@ -1,17 +1,17 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
-use std::time;
 use std::io::prelude::*;
-use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time;
 
 use std::sync::Arc;
 
-use crossbeam_utils::thread;
 use crossbeam_channel;
+use crossbeam_utils::thread;
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crossbeam_utils::atomic::AtomicCell;
 
@@ -54,20 +54,20 @@ fn find_leaf_level(entries: &Vec<TileEntry>, max_dir_size: usize) -> u64 {
   entries.get(max_dir_size).unwrap().z - 1
 }
 
-fn entrysort(e: &TileEntry) ->  (u64, u64, u64) {
+fn entrysort(e: &TileEntry) -> (u64, u64, u64) {
   return (e.z, e.x, e.y);
 }
 
 fn by_parent(leaf_level: u64, e: &TileEntry) -> (u64, u64, u64) {
   let level_diff = e.z - leaf_level;
-  return (
-    leaf_level,
-    e.x / (1 << level_diff),
-    e.y / (1 << level_diff),
-  );
+  return (leaf_level, e.x / (1 << level_diff), e.y / (1 << level_diff));
 }
 
-fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, max_dir_size: usize) -> (Vec<TileEntry>, Vec<Vec<TileEntry>>) {
+fn make_pyramid(
+  tile_entries: &Vec<TileEntry>,
+  start_leaf_offset: u64,
+  max_dir_size: usize,
+) -> (Vec<TileEntry>, Vec<Vec<TileEntry>>) {
   //  sorted_entries = sorted(tile_entries, key=entrysort)
   let mut sorted_entries = tile_entries.clone();
   sorted_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
@@ -82,11 +82,19 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, max_dir_s
   println!("Tiles above z{} will be stored in leaves", leaf_level);
 
   // root_entries = [e for e in sorted_entries if e.z < leaf_level]
-  let mut root_entries = sorted_entries.iter().filter(|e| e.z < leaf_level).cloned().collect::<Vec<TileEntry>>();
+  let mut root_entries = sorted_entries
+    .iter()
+    .filter(|e| e.z < leaf_level)
+    .cloned()
+    .collect::<Vec<TileEntry>>();
   // entries_in_leaves = [e for e in sorted_entries if e.z >= leaf_level]
-  let mut entries_in_leaves = sorted_entries.iter().filter(|e| e.z >= leaf_level).collect::<Vec<&TileEntry>>();
+  let mut entries_in_leaves = sorted_entries
+    .iter()
+    .filter(|e| e.z >= leaf_level)
+    .collect::<Vec<&TileEntry>>();
 
-  let mut leaf_dirs: Vec<Vec<TileEntry>> = Vec::with_capacity(entries_in_leaves.len() / max_dir_size);
+  let mut leaf_dirs: Vec<Vec<TileEntry>> =
+    Vec::with_capacity(entries_in_leaves.len() / max_dir_size);
 
   // # group the entries by their parent (stable)
   // entries_in_leaves.sort(key=by_parent)
@@ -100,7 +108,10 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, max_dir_s
   let mut packed_roots: Vec<(u64, u64, u64)> = Vec::new();
 
   // for group in itertools.groupby(entries_in_leaves, key=by_parent):
-  for (_key, group) in &entries_in_leaves.into_iter().group_by(|e| by_parent(leaf_level, e)) {
+  for (_key, group) in &entries_in_leaves
+    .into_iter()
+    .group_by(|e| by_parent(leaf_level, e))
+  {
     // subpyramid_entries = list(group[1])
     let subpyramid_entries = group.collect::<Vec<&TileEntry>>();
 
@@ -110,7 +121,12 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, max_dir_s
     // if len(packed_entries) + len(subpyramid_entries) <= max_dir_size:
     if packed_entries.len() + subpyramid_entries.len() <= max_dir_size {
       // packed_entries.extend(subpyramid_entries)
-      packed_entries.extend(subpyramid_entries.iter().cloned().collect::<Vec<&TileEntry>>());
+      packed_entries.extend(
+        subpyramid_entries
+          .iter()
+          .cloned()
+          .collect::<Vec<&TileEntry>>(),
+      );
       // packed_roots.append(root)
       packed_roots.push(root);
     } else {
@@ -141,7 +157,12 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, max_dir_s
       current_offset += 17 * packed_entries.len() as u64;
 
       // leaf_dirs.append(packed_entries)
-      leaf_dirs.push(packed_entries.into_iter().cloned().collect::<Vec<TileEntry>>());
+      leaf_dirs.push(
+        packed_entries
+          .into_iter()
+          .cloned()
+          .collect::<Vec<TileEntry>>(),
+      );
 
       // packed_entries = subpyramid_entries
       packed_entries = subpyramid_entries.into_iter().collect();
@@ -177,10 +198,18 @@ fn make_pyramid(tile_entries: &Vec<TileEntry>, start_leaf_offset: u64, max_dir_s
     packed_entries.sort_by(|a, b| entrysort(a).cmp(&entrysort(b)));
 
     // leaf_dirs.append(packed_entries)
-    leaf_dirs.push(packed_entries.into_iter().cloned().collect::<Vec<TileEntry>>());
+    leaf_dirs.push(
+      packed_entries
+        .into_iter()
+        .cloned()
+        .collect::<Vec<TileEntry>>(),
+    );
   }
 
-  println!("root_entries is {} bytes", root_entries.len() * std::mem::size_of::<TileEntry>());
+  println!(
+    "root_entries is {} bytes",
+    root_entries.len() * std::mem::size_of::<TileEntry>()
+  );
 
   // return (root_entries, leaf_dirs)
   return (root_entries, leaf_dirs);
@@ -217,7 +246,7 @@ impl Writer {
     }
   }
 
-  pub fn run(&mut self, metadata: &HashMap::<String, String>) {
+  pub fn run(&mut self, metadata: &HashMap<String, String>) {
     let (result_queue_tx, result_queue_rx) = crossbeam_channel::bounded::<WorkResults>(10_000_000);
 
     let out_path = self.out_path.clone();
@@ -278,8 +307,13 @@ impl Writer {
           }
         }
 
-        let (root_dir, leaf_dirs) = make_pyramid(&tile_entries, offset, DEFAULT_MAX_DIR_SIZE as usize);
-        println!("Calculated {} root entries, {} leaf dirs.", root_dir.len(), leaf_dirs.len());
+        let (root_dir, leaf_dirs) =
+          make_pyramid(&tile_entries, offset, DEFAULT_MAX_DIR_SIZE as usize);
+        println!(
+          "Calculated {} root entries, {} leaf dirs.",
+          root_dir.len(),
+          leaf_dirs.len()
+        );
         if leaf_dirs.len() > 0 {
           for leaf_dir in leaf_dirs {
             for entry in leaf_dir {
@@ -318,20 +352,23 @@ impl Writer {
 
             work_done += 1;
 
-            thread_results_tx.send(WorkResults {
-              zoom_level: work.zoom_level,
-              tile_column: work.tile_column,
-              tile_row: work.tile_row,
-              tile_digest: tile_digest,
-              tile_data: tile_data_uncompressed,
-            }).unwrap();
+            thread_results_tx
+              .send(WorkResults {
+                zoom_level: work.zoom_level,
+                tile_column: work.tile_column,
+                tile_row: work.tile_row,
+                tile_digest: tile_digest,
+                tile_data: tile_data_uncompressed,
+              })
+              .unwrap();
           }
 
           println!("Thread {} did {} jobs.", thread_num, work_done);
           thread_process_done.fetch_sub(1);
         });
       }
-    }).unwrap();
+    })
+    .unwrap();
   }
 
   // One entry is 17 bytes long
@@ -357,14 +394,22 @@ impl Writer {
     out.write(&[y_0, y_1, y_2]).unwrap();
 
     // self.f.write(entry.offset.to_bytes(6, byteorder="little"))
-    let [offset_0, offset_1, offset_2, offset_3, offset_4, offset_5, _offset_6, _offset_7] = (entry.offset).to_le_bytes();
-    out.write(&[offset_0, offset_1, offset_2, offset_3, offset_4, offset_5]).unwrap();
+    let [offset_0, offset_1, offset_2, offset_3, offset_4, offset_5, _offset_6, _offset_7] =
+      (entry.offset).to_le_bytes();
+    out
+      .write(&[offset_0, offset_1, offset_2, offset_3, offset_4, offset_5])
+      .unwrap();
 
     // self.f.write(entry.length.to_bytes(4, byteorder="little"))
     out.write(&(entry.length as u32).to_le_bytes()).unwrap();
   }
 
-  fn write_header(&mut self, out: &mut io::BufWriter<File>, metadata: &HashMap::<String, String>, root_dir_len: u16) {
+  fn write_header(
+    &mut self,
+    out: &mut io::BufWriter<File>,
+    metadata: &HashMap<String, String>,
+    root_dir_len: u16,
+  ) {
     // write header
     // self.f.write((0x4D50).to_bytes(2, byteorder="little"))
     out.write(&0x4D50u16.to_le_bytes()).unwrap();
@@ -375,12 +420,16 @@ impl Writer {
     let metadata_serialized = serde_json::to_string(metadata).unwrap();
     // # 512000 - (17 * 21845) - 2 (magic) - 2 (version) - 4 (jsonlen) - 2 (dictentries) = 140625
     // assert len(metadata_serialized) < 140625
-    assert_eq!(metadata_serialized.len() < (
-      INITIAL_OFFSET - (17 * DEFAULT_MAX_DIR_SIZE) - 2 - 2 - 4 - 2
-    ) as usize, true);
+    assert_eq!(
+      metadata_serialized.len()
+        < (INITIAL_OFFSET - (17 * DEFAULT_MAX_DIR_SIZE) - 2 - 2 - 4 - 2) as usize,
+      true
+    );
 
     // self.f.write(len(metadata_serialized).to_bytes(4, byteorder="little"))
-    out.write(&(metadata_serialized.len() as u32).to_le_bytes()).unwrap();
+    out
+      .write(&(metadata_serialized.len() as u32).to_le_bytes())
+      .unwrap();
 
     // self.f.write(root_entries_len.to_bytes(2, byteorder="little"))
     out.write(&root_dir_len.to_le_bytes()).unwrap();

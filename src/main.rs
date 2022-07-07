@@ -1,16 +1,20 @@
 mod convert;
-mod writer;
-mod reader;
 mod http_server;
+mod reader;
+mod writer;
 
 use clap::{Parser, Subcommand};
 
-use std::path::PathBuf;
 use std::io;
 use std::io::Write;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[clap(name="pmtiles_tool", about="A tool for working with pmtiles archives")]
+#[clap(
+  name = "pmtiles_tool",
+  about = "A tool for working with pmtiles archives",
+  version
+)]
 struct Cli {
   #[clap(subcommand)]
   command: Commands,
@@ -18,7 +22,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-  #[clap(name="convert", about="Convert a mbtiles archive to a pmtiles archive")]
+  #[clap(
+    name = "convert",
+    about = "Convert a mbtiles archive to a pmtiles archive"
+  )]
   Convert {
     /// Input
     #[clap(value_parser)]
@@ -28,20 +35,20 @@ enum Commands {
     #[clap(value_parser)]
     output: PathBuf,
   },
-  #[clap(name="info", about="Get information about a pmtiles archive")]
+  #[clap(name = "info", about = "Get information about a pmtiles archive")]
   Info {
     /// Input
     #[clap(value_parser)]
     input: PathBuf,
   },
-  #[clap(name="serve", about="Serve XYZ tiles from a pmtiles archive")]
+  #[clap(name = "serve", about = "Serve XYZ tiles from a pmtiles archive")]
   Serve {
     /// Input
     #[clap(value_parser)]
     input: PathBuf,
 
     /// Port
-    #[clap(short, long, default_value="8888")]
+    #[clap(short, long, default_value = "8888")]
     port: u16,
   },
 }

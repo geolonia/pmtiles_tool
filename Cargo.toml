@@ -1,6 +1,9 @@
 [package]
 name = "pmtiles_tool"
 version = "0.1.0"
+authors = ["Keitaroh Kobayashi <k.kobayashi@geolonia.com>"]
+homepage = "https://github.com/geolonia/pmtiles_tool"
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

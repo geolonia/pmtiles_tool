@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::fs::File;
-use std::collections::{HashMap, HashSet};
 use memmap2::Mmap;
 use serde_json;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::path::PathBuf;
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 struct DirectoryKey {
@@ -17,7 +17,7 @@ struct DirectoryEntry {
   length: u32,
 }
 
-type Directory = HashMap::<DirectoryKey, DirectoryEntry>;
+type Directory = HashMap<DirectoryKey, DirectoryEntry>;
 
 pub struct Reader {
   mmap: Mmap,
@@ -59,7 +59,10 @@ fn load_directory(mmap: &Mmap, offset: usize, num_entries: usize) -> (Directory,
     let tile_len = u32::from_le_bytes(tile_len_bytes);
 
     // let key = DirectoryKey { z, x, y };
-    let entry = DirectoryEntry { offset: tile_off, length: tile_len };
+    let entry = DirectoryEntry {
+      offset: tile_off,
+      length: tile_len,
+    };
 
     if z & 0b10000000 > 0 {
       let unwrapped_z = z & 0b01111111;
@@ -67,7 +70,14 @@ fn load_directory(mmap: &Mmap, offset: usize, num_entries: usize) -> (Directory,
         leaf_level = unwrapped_z;
       }
       // println!("{:02X?} {}/{}/{} (d) : {:?}", &mmap[i_offset..i_offset+17], unwrapped_z, x, y, entry);
-      leaves.insert(DirectoryKey { z: unwrapped_z, x, y }, entry);
+      leaves.insert(
+        DirectoryKey {
+          z: unwrapped_z,
+          x,
+          y,
+        },
+        entry,
+      );
     } else {
       // println!("{:02X?} {}/{}/{} (t) : {:?}", &mmap[i_offset..i_offset+17], z, x, y, entry);
       directory.insert(DirectoryKey { z, x, y }, entry);
@@ -79,7 +89,7 @@ fn load_directory(mmap: &Mmap, offset: usize, num_entries: usize) -> (Directory,
 
 impl Reader {
   pub fn new(path: &PathBuf) -> Result<Reader, std::io::Error> {
-    println!("Reading {}", path.display());
+    // println!("Reading {}", path.display());
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file)? };
     assert_eq!(&0x4D50u16.to_le_bytes(), &mmap[0..2]);
@@ -115,7 +125,7 @@ impl Reader {
   }
 
   pub fn get_metadata(&self) -> serde_json::Value {
-    let raw_json = &self.mmap[10..(10+self.metadata_len)];
+    let raw_json = &self.mmap[10..(10 + self.metadata_len)];
     let json = serde_json::from_slice(raw_json).unwrap();
     json
   }
@@ -129,10 +139,15 @@ impl Reader {
       return Some(slice);
     } else if self.leaves_len > 0 && z >= self.leaf_level {
       let level_diff = z - self.leaf_level;
-      let leaf = DirectoryKey { z: self.leaf_level, x: x / (1 << level_diff), y: y / (1 << level_diff) };
+      let leaf = DirectoryKey {
+        z: self.leaf_level,
+        x: x / (1 << level_diff),
+        y: y / (1 << level_diff),
+      };
       if let Some(val) = self.leaves.get(&leaf) {
-        let (directory, _, _) = load_directory(&self.mmap, val.offset as usize, val.length as usize / 17);
-        if let Some(val) = directory.get(&DirectoryKey { z, x, y}) {
+        let (directory, _, _) =
+          load_directory(&self.mmap, val.offset as usize, val.length as usize / 17);
+        if let Some(val) = directory.get(&DirectoryKey { z, x, y }) {
           let offset = val.offset;
           let length = val.length;
           let slice = &self.mmap[offset as usize..(offset + length as u64) as usize];

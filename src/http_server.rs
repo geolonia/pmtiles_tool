@@ -1,13 +1,13 @@
 extern crate r2d2;
 
+use crate::reader;
 use hyper::server::conn::AddrStream;
-use std::path::PathBuf;
-use std::{convert::Infallible, net::SocketAddr};
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Request, Response, Server};
 use lazy_static::lazy_static;
 use regex::Regex;
-use hyper::{Body, Request, Response, Server};
-use hyper::service::{make_service_fn, service_fn};
-use crate::reader;
+use std::path::PathBuf;
+use std::{convert::Infallible, net::SocketAddr};
 
 struct ReaderConnectionManager {
   path: PathBuf,
@@ -41,16 +41,18 @@ impl r2d2::ManageConnection for ReaderConnectionManager {
 async fn handle(
   reader_pool: r2d2::Pool<ReaderConnectionManager>,
   _addr: SocketAddr,
-  req: Request<Body>
+  req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
   lazy_static! {
     static ref RE: Regex = Regex::new(r"^/([0-9]+)/([0-9]+)/([0-9]+)\.(mvt|pbf)$").unwrap();
   }
   if !RE.is_match(&req.uri().path()) {
-    return Ok(Response::builder()
-      .status(404)
-      .body(Body::from("Not found"))
-      .unwrap());
+    return Ok(
+      Response::builder()
+        .status(404)
+        .body(Body::from("Not found"))
+        .unwrap(),
+    );
   }
 
   for cap in RE.captures_iter(&req.uri().path()) {
@@ -62,16 +64,20 @@ async fn handle(
     if let Some(tile_data) = reader.get(z, x, y) {
       let my_tile_data: Vec<u8> = tile_data.to_vec();
 
-      return Ok(Response::builder()
-        .status(200)
-        .header("content-type", "application/x-protobuf")
-        .body(Body::from(my_tile_data))
-        .unwrap());
+      return Ok(
+        Response::builder()
+          .status(200)
+          .header("content-type", "application/x-protobuf")
+          .body(Body::from(my_tile_data))
+          .unwrap(),
+      );
     } else {
-      return Ok(Response::builder()
-        .status(204)
-        .body(Body::from(""))
-        .unwrap());
+      return Ok(
+        Response::builder()
+          .status(204)
+          .body(Body::from(""))
+          .unwrap(),
+      );
     }
   }
 
@@ -98,10 +104,7 @@ pub async fn start_server(input: &PathBuf, port: u16) {
   //   .await;
 
   let manager = ReaderConnectionManager::new(input);
-  let pool = r2d2::Pool::builder()
-    .max_size(10)
-    .build(manager)
-    .unwrap();
+  let pool = r2d2::Pool::builder().max_size(10).build(manager).unwrap();
 
   let addr = SocketAddr::from(([127, 0, 0, 1], port));
   let make_svc = make_service_fn(move |conn: &AddrStream| {
@@ -110,9 +113,7 @@ pub async fn start_server(input: &PathBuf, port: u16) {
 
     // let input_1 = input.clone();
 
-    let service = service_fn(move |req| {
-      handle(the_pool.clone(), addr, req)
-    });
+    let service = service_fn(move |req| handle(the_pool.clone(), addr, req));
 
     async move { Ok::<_, Infallible>(service) }
   });
