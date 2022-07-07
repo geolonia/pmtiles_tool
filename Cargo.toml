@@ -20,6 +20,7 @@ lazy_static = "1.4"
 regex = "1.6"
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "0.14", features = ["full"] }
+r2d2 = "0.8"
 
 [dependencies.sqlite3-src]
 version = "0.3"
