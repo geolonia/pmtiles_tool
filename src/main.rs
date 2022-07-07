@@ -1,5 +1,7 @@
 mod convert;
 mod writer;
+mod reader;
+mod http_server;
 
 use clap::{Parser, Subcommand};
 
@@ -39,7 +41,7 @@ enum Commands {
     input: PathBuf,
 
     /// Port
-    #[clap(short, long, default_value="8080")]
+    #[clap(short, long, default_value="8888")]
     port: u16,
   },
 }
@@ -77,7 +79,12 @@ fn main() {
       }
 
       // get the info
-      println!("Not implemented yet!");
+      let reader = reader::Reader::new(&input).unwrap();
+      println!("Version: {}", reader.version);
+      println!("metadata:");
+      // println!("{}", reader.get_metadata());
+      println!("root entries: {}", reader.root_entries_len);
+      println!("leaf directories: {}", reader.leaves_len);
     }
 
     Commands::Serve { input, port } => {
@@ -88,7 +95,7 @@ fn main() {
 
       // serve the tiles
       println!("Starting server on port {}", port);
-      println!("Not implemented yet!");
+      http_server::start_server(&input, port);
     }
   }
 }

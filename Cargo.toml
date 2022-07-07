@@ -15,6 +15,12 @@ crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
 num_cpus = "1.13.1"
 flate2 = { version = "1.0", features = ["zlib-ng"], default-features = false }
+memmap2 = "0.5"
+lazy_static = "1.4"
+regex = "1.6"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
+r2d2 = "0.8"
 
 [dependencies.sqlite3-src]
 version = "0.3"
