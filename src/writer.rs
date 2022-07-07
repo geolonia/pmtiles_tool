@@ -335,6 +335,9 @@ impl Writer {
         // Seek to the beginning of the file so we can write the header
         out.seek(std::io::SeekFrom::Start(0)).unwrap();
         self.write_header(&mut out, metadata, root_dir.len() as u16);
+        for entry in root_dir {
+          self.write_entry(&mut out, entry);
+        }
       });
 
       // worker threads
