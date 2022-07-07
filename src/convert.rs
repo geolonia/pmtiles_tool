@@ -29,6 +29,7 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
     ",
       )
       .unwrap();
+
     while let sqlite::State::Row = statement.next().unwrap() {
       let zoom_level = statement.read::<i64>(0).unwrap();
       let tile_column = statement.read::<i64>(1).unwrap();
@@ -47,7 +48,7 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
         })
         .unwrap();
     }
-    println!("Done reading input from mbtiles.");
+    println!("Finished reading input from mbtiles.");
     input_done.store(true);
   });
 

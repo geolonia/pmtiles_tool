@@ -5,6 +5,7 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time;
+use std::time::Duration;
 
 use std::sync::Arc;
 
@@ -21,6 +22,12 @@ use itertools::Itertools;
 
 const INITIAL_OFFSET: u64 = 512000;
 const DEFAULT_MAX_DIR_SIZE: u64 = 21845;
+
+// because recv() will block indefinitely, we set a timeout on recv.
+// flags are used to signal whether the input / output has finished,
+// so this timeout is only required because without it, the signal
+// won't be refreshed
+const QUEUE_RECV_TIMEOUT_MS: u64 = 100;
 
 pub struct WorkJob {
   pub zoom_level: i64,
@@ -68,6 +75,8 @@ fn make_pyramid(
   start_leaf_offset: u64,
   max_dir_size: usize,
 ) -> (Vec<TileEntry>, Vec<Vec<TileEntry>>) {
+  println!("Making pyramid...");
+
   //  sorted_entries = sorted(tile_entries, key=entrysort)
   let mut sorted_entries = tile_entries.to_vec();
   sorted_entries.sort_by_key(entrysort);
@@ -267,43 +276,47 @@ impl Writer {
         let mut last_ts = time::Instant::now();
 
         while writer_thread_process_done.load() > 0 {
-          let result = result_queue_rx.recv().unwrap();
-          let mut tile_entry = TileEntry {
-            z: result.zoom_level as u64,
-            x: result.tile_column as u64,
-            y: result.tile_row as u64,
-            offset: 0,
-            length: result.tile_data.len() as u32,
-            is_dir: false,
-          };
-          if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
-            tile_entry.offset = *tile_offset;
-          } else {
-            let tile_data_len = result.tile_data.len() as u32;
-            out.write_all(&result.tile_data).unwrap();
-            hash_to_offset.insert(result.tile_digest, offset);
-            tile_entry.offset = offset;
-            offset += tile_data_len as u64;
-          }
+          if let Ok(result) =
+            result_queue_rx.recv_timeout(Duration::from_millis(QUEUE_RECV_TIMEOUT_MS))
+          {
+            let mut tile_entry = TileEntry {
+              z: result.zoom_level as u64,
+              x: result.tile_column as u64,
+              y: result.tile_row as u64,
+              offset: 0,
+              length: result.tile_data.len() as u32,
+              is_dir: false,
+            };
+            if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
+              tile_entry.offset = *tile_offset;
+            } else {
+              let tile_data_len = result.tile_data.len() as u32;
+              out.write_all(&result.tile_data).unwrap();
+              hash_to_offset.insert(result.tile_digest, offset);
+              tile_entry.offset = offset;
+              offset += tile_data_len as u64;
+            }
 
-          tile_entries.push(tile_entry);
+            tile_entries.push(tile_entry);
 
-          current_count += 1;
-          if current_count % 100_000 == 0 {
-            let ts = time::Instant::now();
-            let elapsed = ts.duration_since(last_ts);
-            println!(
-              "{} tiles added to archive in {}ms ({:.4}ms/tile).",
-              current_count,
-              elapsed.as_millis(),
-              elapsed.as_millis() as f64 / 100_000_f64,
-            );
-            last_ts = ts;
+            current_count += 1;
+            if current_count % 100_000 == 0 {
+              let ts = time::Instant::now();
+              let elapsed = ts.duration_since(last_ts);
+              println!(
+                "{} tiles added to archive in {}ms ({:.4}ms/tile).",
+                current_count,
+                elapsed.as_millis(),
+                elapsed.as_millis() as f64 / 100_000_f64,
+              );
+              last_ts = ts;
+            }
           }
         }
 
         let (root_dir, leaf_dirs) =
           make_pyramid(&tile_entries, offset, DEFAULT_MAX_DIR_SIZE as usize);
+
         println!(
           "Calculated {} root entries, {} leaf dirs.",
           root_dir.len(),
@@ -338,24 +351,27 @@ impl Writer {
           let mut work_done = 0;
 
           while !thread_input_done.load() {
-            let work = thread_queue_rx.recv().unwrap();
-            let tile_data_uncompressed = maybe_decompress(work.tile_data);
+            if let Ok(work) =
+              thread_queue_rx.recv_timeout(Duration::from_millis(QUEUE_RECV_TIMEOUT_MS))
+            {
+              let tile_data_uncompressed = maybe_decompress(work.tile_data);
 
-            let mut hasher = DefaultHasher::new();
-            tile_data_uncompressed.hash(&mut hasher);
-            let tile_digest = hasher.finish();
+              let mut hasher = DefaultHasher::new();
+              tile_data_uncompressed.hash(&mut hasher);
+              let tile_digest = hasher.finish();
 
-            work_done += 1;
+              work_done += 1;
 
-            thread_results_tx
-              .send(WorkResults {
-                zoom_level: work.zoom_level,
-                tile_column: work.tile_column,
-                tile_row: work.tile_row,
-                tile_digest,
-                tile_data: tile_data_uncompressed,
-              })
-              .unwrap();
+              thread_results_tx
+                .send(WorkResults {
+                  zoom_level: work.zoom_level,
+                  tile_column: work.tile_column,
+                  tile_row: work.tile_row,
+                  tile_digest,
+                  tile_data: tile_data_uncompressed,
+                })
+                .unwrap();
+            }
           }
 
           println!("Thread {} did {} jobs.", thread_num, work_done);
