@@ -82,7 +82,7 @@ fn main() {
       let reader = reader::Reader::new(&input).unwrap();
       println!("Version: {}", reader.version);
       println!("metadata:");
-      // println!("{}", reader.get_metadata());
+      println!("{}", reader.get_metadata());
       println!("root entries: {}", reader.root_entries_len);
       println!("leaf directories: {}", reader.leaves_len);
     }
