@@ -5,16 +5,11 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time;
-use std::time::Duration;
-
-use std::sync::Arc;
 
 use crossbeam_utils::thread;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-use crossbeam_utils::atomic::AtomicCell;
 
 use flate2::read::GzDecoder;
 
@@ -22,12 +17,6 @@ use itertools::Itertools;
 
 const INITIAL_OFFSET: u64 = 512000;
 const DEFAULT_MAX_DIR_SIZE: u64 = 21845;
-
-// because recv() will block indefinitely, we set a timeout on recv.
-// flags are used to signal whether the input / output has finished,
-// so this timeout is only required because without it, the signal
-// won't be refreshed
-const QUEUE_RECV_TIMEOUT_MS: u64 = 100;
 
 pub struct WorkJob {
   pub zoom_level: i64,
@@ -231,37 +220,21 @@ fn maybe_decompress(data: Vec<u8>) -> Vec<u8> {
 
 pub struct Writer {
   out_path: PathBuf,
-  pub input_done: Arc<AtomicCell<bool>>,
-  pub input_queue_tx: crossbeam_channel::Sender<WorkJob>,
-  input_queue_rx: crossbeam_channel::Receiver<WorkJob>,
 }
 
 impl Writer {
   pub fn new(out_path: &Path) -> Writer {
-    // Work queue (input)
-    let (input_queue_tx, input_queue_rx) = crossbeam_channel::bounded::<WorkJob>(10_000_000);
-
     Writer {
       out_path: out_path.to_path_buf(),
-
-      input_done: Arc::new(AtomicCell::new(false)),
-      input_queue_tx,
-      input_queue_rx,
     }
   }
 
-  pub fn run(&mut self, metadata: &HashMap<String, String>) {
-    let (result_queue_tx, result_queue_rx) = crossbeam_channel::bounded::<WorkResults>(10_000_000);
-
-    let out_path = self.out_path.clone();
-    let input_queue_rx = self.input_queue_rx.clone();
-    let input_done = Arc::clone(&self.input_done);
-
+  pub fn run(&mut self, input_queue_rx: crossbeam_channel::Receiver<WorkJob>, metadata: &HashMap<String, String>) {
     thread::scope(|s| {
-      let process_done = Arc::new(AtomicCell::new(usize::MAX));
+      let (result_queue_tx, result_queue_rx) = crossbeam_channel::bounded::<WorkResults>(10_000_000);
+      let out_path = self.out_path.clone();
 
       // writer thread
-      let writer_thread_process_done = Arc::clone(&process_done);
       s.spawn(move |_| {
         let mut out = io::BufWriter::new(File::create(out_path).unwrap());
         // leave space for the header
@@ -275,42 +248,38 @@ impl Writer {
         let mut current_count = 0;
         let mut last_ts = time::Instant::now();
 
-        while writer_thread_process_done.load() > 0 {
-          if let Ok(result) =
-            result_queue_rx.recv_timeout(Duration::from_millis(QUEUE_RECV_TIMEOUT_MS))
-          {
-            let mut tile_entry = TileEntry {
-              z: result.zoom_level as u64,
-              x: result.tile_column as u64,
-              y: result.tile_row as u64,
-              offset: 0,
-              length: result.tile_data.len() as u32,
-              is_dir: false,
-            };
-            if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
-              tile_entry.offset = *tile_offset;
-            } else {
-              let tile_data_len = result.tile_data.len() as u32;
-              out.write_all(&result.tile_data).unwrap();
-              hash_to_offset.insert(result.tile_digest, offset);
-              tile_entry.offset = offset;
-              offset += tile_data_len as u64;
-            }
+        while let Ok(result) = result_queue_rx.recv() {
+          let mut tile_entry = TileEntry {
+            z: result.zoom_level as u64,
+            x: result.tile_column as u64,
+            y: result.tile_row as u64,
+            offset: 0,
+            length: result.tile_data.len() as u32,
+            is_dir: false,
+          };
+          if let Some(tile_offset) = hash_to_offset.get(&result.tile_digest) {
+            tile_entry.offset = *tile_offset;
+          } else {
+            let tile_data_len = result.tile_data.len() as u32;
+            out.write_all(&result.tile_data).unwrap();
+            hash_to_offset.insert(result.tile_digest, offset);
+            tile_entry.offset = offset;
+            offset += tile_data_len as u64;
+          }
 
-            tile_entries.push(tile_entry);
+          tile_entries.push(tile_entry);
 
-            current_count += 1;
-            if current_count % 100_000 == 0 {
-              let ts = time::Instant::now();
-              let elapsed = ts.duration_since(last_ts);
-              println!(
-                "{} tiles added to archive in {}ms ({:.4}ms/tile).",
-                current_count,
-                elapsed.as_millis(),
-                elapsed.as_millis() as f64 / 100_000_f64,
-              );
-              last_ts = ts;
-            }
+          current_count += 1;
+          if current_count % 100_000 == 0 {
+            let ts = time::Instant::now();
+            let elapsed = ts.duration_since(last_ts);
+            println!(
+              "{} tiles added to archive in {}ms ({:.4}ms/tile).",
+              current_count,
+              elapsed.as_millis(),
+              elapsed.as_millis() as f64 / 100_000_f64,
+            );
+            last_ts = ts;
           }
         }
 
@@ -343,42 +312,34 @@ impl Writer {
       // worker threads
       let max_workers = std::cmp::max(num_cpus::get() - 1, 2);
       println!("Spawning {} workers.", max_workers);
-      Arc::clone(&process_done).store(max_workers);
 
       for thread_num in 0..max_workers {
         let thread_queue_rx = input_queue_rx.clone();
         let thread_results_tx = result_queue_tx.clone();
-        let thread_input_done = Arc::clone(&input_done);
-        let thread_process_done = Arc::clone(&process_done);
         s.spawn(move |_| {
           let mut work_done = 0;
 
-          while !thread_input_done.load() {
-            if let Ok(work) =
-              thread_queue_rx.recv_timeout(Duration::from_millis(QUEUE_RECV_TIMEOUT_MS))
-            {
-              let tile_data_uncompressed = maybe_decompress(work.tile_data);
+          while let Ok(work) = thread_queue_rx.recv() {
+            let tile_data_uncompressed = maybe_decompress(work.tile_data);
 
-              let mut hasher = DefaultHasher::new();
-              tile_data_uncompressed.hash(&mut hasher);
-              let tile_digest = hasher.finish();
+            let mut hasher = DefaultHasher::new();
+            tile_data_uncompressed.hash(&mut hasher);
+            let tile_digest = hasher.finish();
 
-              work_done += 1;
+            work_done += 1;
 
-              thread_results_tx
-                .send(WorkResults {
-                  zoom_level: work.zoom_level,
-                  tile_column: work.tile_column,
-                  tile_row: work.tile_row,
-                  tile_digest,
-                  tile_data: tile_data_uncompressed,
-                })
-                .unwrap();
-            }
+            thread_results_tx
+              .send(WorkResults {
+                zoom_level: work.zoom_level,
+                tile_column: work.tile_column,
+                tile_row: work.tile_row,
+                tile_digest,
+                tile_data: tile_data_uncompressed,
+              })
+              .unwrap();
           }
 
           println!("Thread {} did {} jobs.", thread_num, work_done);
-          thread_process_done.fetch_sub(1);
         });
       }
     })
