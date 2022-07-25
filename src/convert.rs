@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::thread;
 
 use crate::writer;
@@ -8,9 +7,9 @@ use crate::writer;
 pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
   let mut writer = writer::Writer::new(&output);
 
-  let input_queue_tx = writer.input_queue_tx.clone();
+  let (input_queue_tx, input_queue_rx) = crossbeam_channel::bounded::<writer::WorkJob>(10_000_000);
+
   let thread_input = input.clone();
-  let input_done = Arc::clone(&writer.input_done);
   let input_thread_handle = thread::spawn(move || {
     let connection = sqlite::open(thread_input).unwrap();
     connection.execute("PRAGMA query_only = true;").unwrap();
@@ -49,7 +48,6 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
         .unwrap();
     }
     println!("Finished reading input from mbtiles.");
-    input_done.store(true);
   });
 
   let connection = sqlite::open(input).unwrap();
@@ -70,7 +68,7 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
   // We are removing compression from the tile, so we need to remove the compression flag.
   metadata_raw.remove("compression");
 
-  writer.run(&metadata_raw);
+  writer.run(input_queue_rx, &metadata_raw);
   input_thread_handle.join().unwrap();
 
   println!("Filled {} with all the good things", output.display());
