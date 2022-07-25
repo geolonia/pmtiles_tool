@@ -229,9 +229,14 @@ impl Writer {
     }
   }
 
-  pub fn run(&mut self, input_queue_rx: crossbeam_channel::Receiver<WorkJob>, metadata: &HashMap<String, String>) {
+  pub fn run(
+    &mut self,
+    input_queue_rx: crossbeam_channel::Receiver<WorkJob>,
+    metadata: &HashMap<String, String>,
+  ) {
     thread::scope(|s| {
-      let (result_queue_tx, result_queue_rx) = crossbeam_channel::bounded::<WorkResults>(10_000_000);
+      let (result_queue_tx, result_queue_rx) =
+        crossbeam_channel::bounded::<WorkResults>(10_000_000);
       let out_path = self.out_path.clone();
 
       // writer thread
