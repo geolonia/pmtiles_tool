@@ -236,7 +236,7 @@ impl Writer {
   ) {
     thread::scope(|s| {
       let (result_queue_tx, result_queue_rx) =
-        crossbeam_channel::bounded::<WorkResults>(10_000_000);
+        crossbeam_channel::unbounded::<WorkResults>();
       let out_path = self.out_path.clone();
 
       // writer thread
@@ -316,7 +316,7 @@ impl Writer {
       });
 
       // worker threads
-      let max_workers = std::cmp::max(num_cpus::get() - 1, 2);
+      let max_workers = std::cmp::max(num_cpus::get() / 2, 2);
       println!("Spawning {} workers.", max_workers);
 
       for thread_num in 0..max_workers {

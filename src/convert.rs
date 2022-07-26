@@ -91,12 +91,12 @@ fn split_tile_extent_recursive(e: InputTileZoomExtent) -> Vec<InputTileZoomExten
 pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
   let mut writer = writer::Writer::new(&output);
 
-  let (input_queue_tx, input_queue_rx) = crossbeam_channel::bounded::<writer::WorkJob>(10_000_000);
+  let (input_queue_tx, input_queue_rx) = crossbeam_channel::unbounded::<writer::WorkJob>();
 
   let mut input_thread_handles = Vec::new();
 
   // worker threads
-  let max_workers = std::cmp::max(num_cpus::get() - 1, 2);
+  let max_workers = std::cmp::max(num_cpus::get() / 2, 2);
   println!("Spawning {} input workers.", max_workers);
 
   let mut input_extents = Vec::<InputTileZoomExtent>::new();
