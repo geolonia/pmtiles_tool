@@ -241,14 +241,14 @@ impl Writer {
 
       // writer thread
       s.spawn(move |_| {
-        let mut out = io::BufWriter::new(File::create(out_path).unwrap());
+        let mut out = io::BufWriter::with_capacity(512000, File::create(out_path).unwrap());
         // leave space for the header
         out.write_all(&[0; INITIAL_OFFSET as usize]).unwrap();
 
         let mut tile_entries = Vec::<TileEntry>::with_capacity(1_000_000);
 
         let mut offset = INITIAL_OFFSET;
-        let mut hash_to_offset = HashMap::with_capacity(1_000_000);
+        let mut hash_to_offset = HashMap::<u64, u64>::with_capacity(1_000_000);
 
         let mut current_count = 0;
         let mut last_ts = time::Instant::now();
@@ -312,6 +312,7 @@ impl Writer {
         for entry in root_dir {
           self.write_entry(&mut out, entry);
         }
+        out.flush().unwrap();
       });
 
       // worker threads
