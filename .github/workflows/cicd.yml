@@ -28,6 +28,10 @@ jobs:
         default: true
         profile: minimal # minimal component installation (ie, no documentation)
         components: clippy, rustfmt
+
+    - name: Set up cache
+      uses: Swatinem/rust-cache@v2
+
     - name: Ensure `cargo fmt` has been run
       uses: actions-rs/cargo@v1
       with:
@@ -91,6 +95,9 @@ jobs:
         rustup default
         cargo -V
         rustc -V
+
+    - name: Set up cache
+      uses: Swatinem/rust-cache@v2
 
     - name: Build
       uses: actions-rs/cargo@v1
