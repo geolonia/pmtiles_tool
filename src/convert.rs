@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::thread;
 use std::sync::Arc;
+use std::thread;
 
 use crate::writer;
 
@@ -103,7 +103,8 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
   let connection = sqlite::open(&input).unwrap();
   connection.execute("PRAGMA query_only = true;").unwrap();
   let mut extent_stmt = connection
-    .prepare("
+    .prepare(
+      "
       SELECT
         zoom_level,
         MIN(tile_column) AS min_tile_column,
@@ -113,7 +114,9 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
       FROM tiles
       GROUP BY zoom_level
       ;
-    ").unwrap();
+    ",
+    )
+    .unwrap();
   while let sqlite::State::Row = extent_stmt.next().unwrap() {
     let zoom_level = extent_stmt.read::<i64>(0).unwrap();
     let min_tile_column = extent_stmt.read::<i64>(1).unwrap();
@@ -173,7 +176,11 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
         .unwrap();
 
       let extent_n = worker_id + 1;
-      for extent in thread_extents.iter().skip(extent_n - 1).step_by(max_workers) {
+      for extent in thread_extents
+        .iter()
+        .skip(extent_n - 1)
+        .step_by(max_workers)
+      {
         statement.bind(1, extent.zoom as i64).unwrap();
         statement.bind(2, extent.min_x as i64).unwrap();
         statement.bind(3, extent.max_x as i64).unwrap();
