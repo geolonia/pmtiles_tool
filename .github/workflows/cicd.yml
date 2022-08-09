@@ -29,8 +29,15 @@ jobs:
         profile: minimal # minimal component installation (ie, no documentation)
         components: clippy, rustfmt
 
-    - name: Set up cache
-      uses: Swatinem/rust-cache@v2
+    - uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Ensure `cargo fmt` has been run
       uses: actions-rs/cargo@v1
@@ -55,9 +62,10 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { target: aarch64-unknown-linux-gnu   , os: ubuntu-20.04, use-cross: true }
-          - { target: x86_64-apple-darwin         , os: macos-10.15                   }
-          - { target: x86_64-unknown-linux-gnu    , os: ubuntu-20.04, use-cross: true }
+          - { target: aarch64-unknown-linux-gnu   , os: ubuntu-20.04, use-cross: true, run-test: true  }
+          - { target: x86_64-apple-darwin         , os: macos-12,                      run-test: true  }
+          - { target: aarch64-apple-darwin        , os: macos-12,     use-cross: true, run-test: false }
+          - { target: x86_64-unknown-linux-gnu    , os: ubuntu-20.04, use-cross: true, run-test: true  }
     steps:
     - name: Checkout source code
       uses: actions/checkout@v2
@@ -96,8 +104,15 @@ jobs:
         cargo -V
         rustc -V
 
-    - name: Set up cache
-      uses: Swatinem/rust-cache@v2
+    - uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ matrix.job.target }}-${{ matrix.job.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build
       uses: actions-rs/cargo@v1
@@ -145,6 +160,7 @@ jobs:
 
     - name: Run tests
       uses: actions-rs/cargo@v1
+      if: matrix.job.run-test
       with:
         use-cross: ${{ matrix.job.use-cross }}
         command: test

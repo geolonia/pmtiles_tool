@@ -155,10 +155,4 @@ impl Reader {
     }
     None
   }
-
-  // pub fn get_leaf_level(&self) -> u8 {
-  //   let mut leaf_level = [0u8; 1];
-  //   leaf_level.copy_from_slice(&self.mmap[10..11]);
-  //   leaf_level[0]
-  // }
 }
