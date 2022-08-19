@@ -68,6 +68,7 @@ async fn handle(
         Response::builder()
           .status(200)
           .header("content-type", "application/x-protobuf")
+          .header("access-control-allow-origin", "*")
           .body(Body::from(my_tile_data))
           .unwrap(),
       );
