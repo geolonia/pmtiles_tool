@@ -41,12 +41,15 @@ impl r2d2::ManageConnection for ReaderConnectionManager {
 async fn handle(
   reader_pool: r2d2::Pool<ReaderConnectionManager>,
   _addr: SocketAddr,
+  port: u16,
   req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
   lazy_static! {
-    static ref RE: Regex = Regex::new(r"^/([0-9]+)/([0-9]+)/([0-9]+)\.(mvt|pbf)$").unwrap();
+    static ref META_RE: Regex = Regex::new(r"^/tiles\.json$").unwrap();
+    static ref TILE_RE: Regex = Regex::new(r"^/([0-9]+)/([0-9]+)/([0-9]+)\.(mvt|pbf)$").unwrap();
   }
-  if !RE.is_match(req.uri().path()) {
+  let path = req.uri().path();
+  if !TILE_RE.is_match(path) && !META_RE.is_match(path) {
     return Ok(
       Response::builder()
         .status(404)
@@ -55,7 +58,55 @@ async fn handle(
     );
   }
 
-  if let Some(cap) = RE.captures_iter(req.uri().path()).next() {
+  if let Some(_) = META_RE.captures_iter(path).next() {
+    println!("Serving tile.json");
+    let reader = reader_pool.get().unwrap();
+    let orig_metadata = reader.get_metadata();
+    if let serde_json::Value::Object(mut metadata) = orig_metadata {
+      if let Some(bounds) = metadata.get("bounds") {
+        let bounds_array = bounds.as_str().unwrap().split(",").map(|s| serde_json::Value::Number(s.parse().unwrap())).collect();
+        metadata.insert("bounds".to_string(), serde_json::Value::Array(bounds_array));
+      }
+      if let Some(center) = metadata.get("center") {
+        let center_array = center.as_str().unwrap().split(",").map(|s| serde_json::Value::Number(s.parse().unwrap())).collect();
+        metadata.insert("center".to_string(), serde_json::Value::Array(center_array));
+      }
+      if let Some(minzoom) = metadata.get("minzoom") {
+        let minzoom_num = minzoom.as_str().unwrap().parse().unwrap();
+        metadata.insert("minzoom".to_string(), serde_json::Value::Number(minzoom_num));
+      }
+      if let Some(maxzoom) = metadata.get("maxzoom") {
+        let maxzoom_num = maxzoom.as_str().unwrap().parse().unwrap();
+        metadata.insert("maxzoom".to_string(), serde_json::Value::Number(maxzoom_num));
+      }
+      if let Some(json) = metadata.get("json") {
+        let raw_json = json.as_str().unwrap();
+        let parsed_json: serde_json::Value = serde_json::from_str(raw_json).unwrap();
+        metadata.remove("json");
+        for (key, value) in parsed_json.as_object().unwrap().iter() {
+          metadata.insert(key.to_string(), value.clone());
+        }
+      }
+
+      metadata.insert("tiles".to_string(), serde_json::Value::Array(vec![
+        serde_json::Value::String(
+          format!("http://localhost:{}/{{z}}/{{x}}/{{y}}.pbf", port).to_string()
+        )
+      ]));
+
+      return Ok(
+        Response::builder()
+          .status(200)
+          .header("access-control-allow-origin", "*")
+          .body(Body::from(serde_json::to_string(&metadata).unwrap()))
+          .unwrap(),
+      );
+    } else {
+      panic!();
+    }
+  }
+
+  if let Some(cap) = TILE_RE.captures_iter(path).next() {
     let z = cap[1].parse::<u8>().unwrap();
     let x = cap[2].parse::<u32>().unwrap();
     let y = cap[3].parse::<u32>().unwrap();
@@ -87,23 +138,6 @@ async fn handle(
 
 #[tokio::main]
 pub async fn start_server(input: &Path, port: u16) {
-  // GET /hello/warp => 200 OK with body "Hello, warp!"
-  // let hello = warp::path!(u32 / u32 / u32)
-  //     .map(|z, x, y| {
-  //       // format!("Serving tile: {}/{}/{}", z, x, y)
-  //       if let Some(tile) = &reader.get(z as u8, x, y) {
-  //         return warp::http::Response::builder()
-  //           .header("content-type", "application/x-protobuf")
-  //           .body(tile);
-  //       }
-
-  //       format!("Tile not found: {}/{}/{}", z, x, y)
-  //     });
-
-  // warp::serve(hello)
-  //   .run(([127, 0, 0, 1], port))
-  //   .await;
-
   let manager = ReaderConnectionManager::new(input);
   let pool = r2d2::Pool::builder().max_size(10).build(manager).unwrap();
 
@@ -112,9 +146,7 @@ pub async fn start_server(input: &Path, port: u16) {
     let the_pool = pool.clone();
     let addr = conn.remote_addr();
 
-    // let input_1 = input.clone();
-
-    let service = service_fn(move |req| handle(the_pool.clone(), addr, req));
+    let service = service_fn(move |req| handle(the_pool.clone(), addr, port, req));
 
     async move { Ok::<_, Infallible>(service) }
   });
