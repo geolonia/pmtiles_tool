@@ -58,26 +58,42 @@ async fn handle(
     );
   }
 
-  if let Some(_) = META_RE.captures_iter(path).next() {
+  if META_RE.captures_iter(path).next().is_some() {
     println!("Serving tile.json");
     let reader = reader_pool.get().unwrap();
     let orig_metadata = reader.get_metadata();
     if let serde_json::Value::Object(mut metadata) = orig_metadata {
       if let Some(bounds) = metadata.get("bounds") {
-        let bounds_array = bounds.as_str().unwrap().split(",").map(|s| serde_json::Value::Number(s.parse().unwrap())).collect();
+        let bounds_array = bounds
+          .as_str()
+          .unwrap()
+          .split(',')
+          .map(|s| serde_json::Value::Number(s.parse().unwrap()))
+          .collect();
         metadata.insert("bounds".to_string(), serde_json::Value::Array(bounds_array));
       }
       if let Some(center) = metadata.get("center") {
-        let center_array = center.as_str().unwrap().split(",").map(|s| serde_json::Value::Number(s.parse().unwrap())).collect();
+        let center_array = center
+          .as_str()
+          .unwrap()
+          .split(',')
+          .map(|s| serde_json::Value::Number(s.parse().unwrap()))
+          .collect();
         metadata.insert("center".to_string(), serde_json::Value::Array(center_array));
       }
       if let Some(minzoom) = metadata.get("minzoom") {
         let minzoom_num = minzoom.as_str().unwrap().parse().unwrap();
-        metadata.insert("minzoom".to_string(), serde_json::Value::Number(minzoom_num));
+        metadata.insert(
+          "minzoom".to_string(),
+          serde_json::Value::Number(minzoom_num),
+        );
       }
       if let Some(maxzoom) = metadata.get("maxzoom") {
         let maxzoom_num = maxzoom.as_str().unwrap().parse().unwrap();
-        metadata.insert("maxzoom".to_string(), serde_json::Value::Number(maxzoom_num));
+        metadata.insert(
+          "maxzoom".to_string(),
+          serde_json::Value::Number(maxzoom_num),
+        );
       }
       if let Some(json) = metadata.get("json") {
         let raw_json = json.as_str().unwrap();
@@ -88,11 +104,12 @@ async fn handle(
         }
       }
 
-      metadata.insert("tiles".to_string(), serde_json::Value::Array(vec![
-        serde_json::Value::String(
-          format!("http://localhost:{}/{{z}}/{{x}}/{{y}}.pbf", port).to_string()
-        )
-      ]));
+      metadata.insert(
+        "tiles".to_string(),
+        serde_json::Value::Array(vec![serde_json::Value::String(
+          format!("http://localhost:{}/{{z}}/{{x}}/{{y}}.pbf", port),
+        )]),
+      );
 
       return Ok(
         Response::builder()
