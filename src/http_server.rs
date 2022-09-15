@@ -106,9 +106,10 @@ async fn handle(
 
       metadata.insert(
         "tiles".to_string(),
-        serde_json::Value::Array(vec![serde_json::Value::String(
-          format!("http://localhost:{}/{{z}}/{{x}}/{{y}}.pbf", port),
-        )]),
+        serde_json::Value::Array(vec![serde_json::Value::String(format!(
+          "http://localhost:{}/{{z}}/{{x}}/{{y}}.pbf",
+          port
+        ))]),
       );
 
       return Ok(
