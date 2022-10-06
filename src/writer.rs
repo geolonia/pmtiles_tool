@@ -17,6 +17,8 @@ use itertools::Itertools;
 
 const INITIAL_OFFSET: u64 = 512000;
 const DEFAULT_MAX_DIR_SIZE: u64 = 21845;
+// 512000 - (17 * 21845) - 2 (magic) - 2 (version) - 4 (jsonlen) - 2 (dictentries) = 140625
+const MAXIMUM_METADATA_SIZE: u64 = INITIAL_OFFSET - (17 * DEFAULT_MAX_DIR_SIZE) - 2 - 2 - 4 - 2;
 
 pub struct WorkJob {
   pub zoom_level: i64,
@@ -234,6 +236,15 @@ impl Writer {
     input_queue_rx: crossbeam_channel::Receiver<WorkJob>,
     metadata: &HashMap<String, String>,
   ) {
+    let metadata_serialized = serde_json::to_string(metadata).unwrap();
+    if metadata_serialized.len() >= MAXIMUM_METADATA_SIZE as usize {
+      panic!(
+        "Metadata is too large ({}). Maximum size is {} bytes.",
+        metadata_serialized.len(),
+        MAXIMUM_METADATA_SIZE
+      );
+    }
+
     thread::scope(|s| {
       let (result_queue_tx, result_queue_rx) = crossbeam_channel::unbounded::<WorkResults>();
       let out_path = self.out_path.clone();
@@ -307,7 +318,7 @@ impl Writer {
         println!("Writing header and root dir...");
         // Seek to the beginning of the file so we can write the header
         out.seek(std::io::SeekFrom::Start(0)).unwrap();
-        self.write_header(&mut out, metadata, root_dir.len() as u16);
+        self.write_header(&mut out, metadata_serialized, root_dir.len() as u16);
         for entry in root_dir {
           self.write_entry(&mut out, entry);
         }
@@ -387,7 +398,7 @@ impl Writer {
   fn write_header(
     &mut self,
     out: &mut io::BufWriter<File>,
-    metadata: &HashMap<String, String>,
+    metadata_serialized: String, // &HashMap<String, String>,
     root_dir_len: u16,
   ) {
     // write header
@@ -396,14 +407,6 @@ impl Writer {
 
     // self.f.write((2).to_bytes(2, byteorder="little"))
     out.write_all(&2u16.to_le_bytes()).unwrap();
-
-    let metadata_serialized = serde_json::to_string(metadata).unwrap();
-    // # 512000 - (17 * 21845) - 2 (magic) - 2 (version) - 4 (jsonlen) - 2 (dictentries) = 140625
-    // assert len(metadata_serialized) < 140625
-    assert!(
-      metadata_serialized.len()
-        < (INITIAL_OFFSET - (17 * DEFAULT_MAX_DIR_SIZE) - 2 - 2 - 4 - 2) as usize
-    );
 
     // self.f.write(len(metadata_serialized).to_bytes(4, byteorder="little"))
     out
