@@ -402,20 +402,25 @@ impl Writer {
     root_dir_len: u16,
   ) {
     // write header
+    // magic number
     // self.f.write((0x4D50).to_bytes(2, byteorder="little"))
     out.write_all(&0x4D50u16.to_le_bytes()).unwrap();
 
+    // version
     // self.f.write((2).to_bytes(2, byteorder="little"))
     out.write_all(&2u16.to_le_bytes()).unwrap();
 
+    // metadata length
     // self.f.write(len(metadata_serialized).to_bytes(4, byteorder="little"))
     out
       .write_all(&(metadata_serialized.len() as u32).to_le_bytes())
       .unwrap();
 
+    // root dir length
     // self.f.write(root_entries_len.to_bytes(2, byteorder="little"))
     out.write_all(&root_dir_len.to_le_bytes()).unwrap();
 
+    // metadata
     // self.f.write(metadata_serialized.encode("utf-8"))
     out.write_all(metadata_serialized.as_bytes()).unwrap();
   }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
-use crate::writer;
+use crate::writer_v2;
 
 const EXTENT_CHUNK_TILE_COUNT: u64 = u64::pow(2, 15);
 
@@ -89,9 +89,9 @@ fn split_tile_extent_recursive(e: InputTileZoomExtent) -> Vec<InputTileZoomExten
 }
 
 pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
-  let mut writer = writer::Writer::new(&output);
+  let mut writer = writer_v2::Writer::new(&output);
 
-  let (input_queue_tx, input_queue_rx) = crossbeam_channel::unbounded::<writer::WorkJob>();
+  let (input_queue_tx, input_queue_rx) = crossbeam_channel::unbounded::<writer_v2::WorkJob>();
 
   let mut input_thread_handles = Vec::new();
 
@@ -197,7 +197,7 @@ pub fn mbtiles_to_pmtiles(input: PathBuf, output: PathBuf) {
           let flipped_row = (1 << zoom_level) - 1 - tile_row;
 
           thread_input_queue_tx
-            .send(writer::WorkJob {
+            .send(writer_v2::WorkJob {
               zoom_level,
               tile_column,
               tile_row: flipped_row,
